@@ -1,0 +1,507 @@
+/* Chat page: one continuous conversation with her and its composer, plus the
+ * pointer to the group and the collapsed activity stream above the messages.
+ * The private history is a collapsed drawer, not a second column: this window
+ * is the linear chat, so the list only opens when it is asked for. The composer
+ * surface follows the theme's elevated-surface rule (no border,
+ * --dsw-elevation-soft). */
+
+.layout {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* The collapsed private history: one line above the stream, opened on demand. */
+.history {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 6px;
+  max-height: 240px;
+  margin: 0 4px 10px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+  --dsh-scrollbar-width: 9px;
+  --dsh-scrollbar-thumb-border: 2px;
+}
+
+.historyNote {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.conversationList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conversationRow {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversationRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.conversationActive,
+.conversationActive:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.conversationTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulkBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* The one history column owns the scrollbar; rows carry no headings. */
+.stream {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  --dsh-scrollbar-width: 9px;
+  --dsh-scrollbar-thumb-border: 2px;
+}
+
+.conversationItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conversationCheck {
+  flex: 0 0 auto;
+}
+
+/* The row keeps one quiet delete control that appears on hover or focus. */
+.conversationDelete {
+  flex: 0 0 auto;
+  opacity: 0;
+}
+
+.conversationItem:hover .conversationDelete,
+.conversationDelete:focus-visible {
+  opacity: 1;
+}
+
+.thread {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 20px clamp(20px, 3vw, 40px) 20px;
+}
+
+.threadHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  margin-bottom: 12px;
+}
+
+.threadActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 4px 12px;
+  --dsh-scrollbar-width: 9px;
+  --dsh-scrollbar-thumb-border: 2px;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(640px, 86%);
+  padding: 10px 14px;
+  border-radius: var(--dsw-radius-lg);
+}
+
+.owner {
+  align-self: flex-end;
+  background: var(--dsw-specific-bubble);
+}
+
+.fish {
+  align-self: flex-start;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.author {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.messageText {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Right rail: the stored thinking records, scrollable, one chain per item. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 300px;
+  min-height: 0;
+  border-left: 1px solid var(--dsw-alias-line-soft);
+  padding-left: 10px;
+  margin-left: 10px;
+}
+
+.railHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-text-secondary);
+  padding: 2px 0 6px;
+}
+
+.railList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.railItem {
+  border-bottom: 1px solid var(--dsw-alias-line-soft);
+}
+
+.railRow {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 2px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.railTime {
+  flex: 0 0 38px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-text-secondary);
+  font-size: 12px;
+}
+
+.railPreview {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.railBody {
+  margin: 0 0 8px;
+  padding: 8px;
+  max-height: 34vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The current round's one-line reasoning, kept above the message column. */
+.traceTop {
+  margin: 0 0 8px;
+}
+
+/* The collapsed why-chain: what this turn cost and what she did with it. */
+.trace {
+  margin: 2px 0 0;
+  padding: 4px 8px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.traceSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.traceSummary::-webkit-details-marker {
+  display: none;
+}
+
+.traceSummary::before {
+  content: '▸';
+  font-size: 10px;
+}
+
+.trace[open] > .traceSummary::before {
+  content: '▾';
+}
+
+.traceList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.traceList > li {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+/* Where the group lives: one quiet line, never a second window. */
+.streamNote {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* Unified activity stream: private and group rows in one time order. Closed by
+ * default so it never competes with the conversation. */
+.activity {
+  margin: 0 4px 10px;
+  padding: 4px 8px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.activitySummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.activitySummary::-webkit-details-marker {
+  display: none;
+}
+
+.activitySummary::before {
+  content: '▸';
+  font-size: 10px;
+}
+
+.activity[open] > .activitySummary::before {
+  content: '▾';
+}
+
+.activityCount {
+  color: var(--dsw-alias-label-caption);
+}
+
+.activityEmpty {
+  margin: 6px 0 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.activityList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 2px;
+  padding: 0;
+  max-height: 200px;
+  overflow: auto;
+  list-style: none;
+  --dsh-scrollbar-width: 9px;
+  --dsh-scrollbar-thumb-border: 2px;
+}
+
+.activityRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.activityWhere {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.activityTime {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-caption);
+}
+
+.activityWho {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.activityText {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.job {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--dsw-radius-panel);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-soft);
+}
+
+.composerInput {
+  flex: 1;
+  min-width: 0;
+  min-height: 60px;
+  max-height: 200px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  resize: none;
+}
+
+.composerInput::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.composerInput:focus {
+  outline: none;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .history {
+    max-height: 160px;
+  }
+
+  .message {
+    max-width: 100%;
+  }
+}
+
+.mediaPreview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mediaPreview img {
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.thought {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.65;
+}

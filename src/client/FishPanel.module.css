@@ -1,0 +1,143 @@
+/* Fish workspace panel: the frame around the five pages. Surfaces and ink come
+ * only from --dsw-* semantic tokens; geometry follows the sibling first-level
+ * pages (960px content column, 28px heading inset, 20px/500 title). */
+
+.panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 28px clamp(24px, 4vw, 48px) 0;
+}
+
+/* macOS hiddenInset titlebar: keep the frame's top clearance above the inset. */
+:global([data-platform='darwin']) .header {
+  padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px));
+}
+
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 500;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.statusError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.fact {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refresh {
+  width: 28px;
+  padding: 0;
+}
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px clamp(24px, 4vw, 48px) 0;
+  padding: 12px 14px;
+  border-radius: var(--dsw-radius-md);
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  background: var(--dsw-specific-tip);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.error {
+  border-color: var(--dsw-alias-state-error-secondary);
+}
+
+.bannerGlyph {
+  flex: none;
+  margin-top: 1px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.bannerText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bannerText strong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.detail {
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.tabs {
+  margin: 20px clamp(24px, 4vw, 48px) 0;
+  align-self: flex-start;
+  width: max-content;
+  max-width: calc(100% - 2 * clamp(24px, 4vw, 48px));
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 16px;
+  border-top: 0.5px solid var(--dsw-alias-border-l4);
+}
