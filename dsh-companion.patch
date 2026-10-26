@@ -1,0 +1,1012 @@
+diff --git a/packages/client/ui-chat/README.md b/packages/client/ui-chat/README.md
+index 312796cdb9..cb8db9cad2 100644
+--- a/packages/client/ui-chat/README.md
++++ b/packages/client/ui-chat/README.md
+@@ -10,6 +10,8 @@ Desktop product events use the optional [product analytics service](../product-a
+ 
+ ## Summary
+ 
++Composer and completed-turn statistic controls share `ui-primitives`’ `StatisticPill`, `StatisticDetails` and number formatters. Session projections and turn usage remain owned here; the shared display reads no Session store.
++
+ Use this package to render a browser chat from recorded Session conversations, including historical images, localized actions, and restored scroll position. Work-details modes control reasoning previews and process visibility without hiding final answers; Verbose keeps completed-turn process rows visible. Local transcript and steering submissions appear immediately, remain in their original surface, and disappear atomically when authoritative Session records arrive, while queued submissions stay outside Chat. The package does not assemble or modify model requests.
+ 
+ File-mention providers receive the viewed Session ID with the closing-turn owner, so links into inherited history can address the fork itself.
+diff --git a/packages/client/ui-chat/src/client/chat/StatsPills.module.css b/packages/client/ui-chat/src/client/chat/StatsPills.module.css
+index dd9816e96e..2803ae9664 100644
+--- a/packages/client/ui-chat/src/client/chat/StatsPills.module.css
++++ b/packages/client/ui-chat/src/client/chat/StatsPills.module.css
+@@ -1,57 +1 @@
+-/* Composer statistics use compact controls; their click-open panels share
+-   stat-dialog.module.css. */
+-
+-/* Entry root and dialog anchor: shrink-wraps its pill so the panel clamp
+-   measures the pill. */
+-.anchor {
+-  display: inline-flex;
+-  min-width: 0;
+-  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+-  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+-}
+-
+-.pill {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 6px;
+-  box-sizing: border-box;
+-  max-width: 100%;
+-  padding: 1px 8px;
+-  border: none;
+-  border-radius: var(--dsw-radius-sm);
+-  background: transparent;
+-  color: var(--dsw-alias-label-tertiary);
+-  font: inherit;
+-  font-variant-numeric: tabular-nums;
+-  line-height: inherit;
+-  white-space: nowrap;
+-}
+-
+-.pill svg {
+-  width: 14px;
+-  height: 14px;
+-  flex: none;
+-}
+-
+-/* Only the button form (a pill with dialog rows to open) invites interaction;
+-   the static span form keeps the resting tertiary reading. */
+-button.pill {
+-  cursor: pointer;
+-}
+-
+-button.pill:hover,
+-button.pill[aria-expanded='true'] {
+-  background: var(--dsw-alias-interactive-bg-hover);
+-  color: var(--dsw-alias-label-secondary);
+-}
+-
+-.label {
+-  min-width: 0;
+-  overflow: hidden;
+-  text-overflow: ellipsis;
+-}
+-
+-.sep {
+-  color: var(--dsw-alias-separator-primary);
+-  margin: 0 6px;
+-}
++.sep { color:var(--dsw-alias-separator-primary); margin:0 6px; }
+diff --git a/packages/client/ui-chat/src/client/chat/StatsPills.tsx b/packages/client/ui-chat/src/client/chat/StatsPills.tsx
+index 838effb768..f4a55a9d41 100644
+--- a/packages/client/ui-chat/src/client/chat/StatsPills.tsx
++++ b/packages/client/ui-chat/src/client/chat/StatsPills.tsx
+@@ -5,8 +5,7 @@
+ // stream-delta updates from rerendering the pills.
+ 
+ import { memo, useMemo, type ReactNode } from 'react'
+-import { createPortal } from 'react-dom'
+-import { IconDatabaseOutlineRegular, IconGaugeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
++import { StatisticPill, StatisticDetails, IconDatabaseOutlineRegular, IconGaugeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
+ import type { InjectFace, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+ // Type-only: merges the sessionStats key into SessionProjectionMap for useProjection.
+@@ -17,9 +16,7 @@ import type { ChatSnapshot } from '../contract/snapshot.ts'
+ import { formatTokensPerSecond } from './message-chrome.ts'
+ import { assistantStepReading } from '../contract/turn-metrics.ts'
+ import { formatCacheHitPercent, formatExactTokens, formatTokens } from './token-format.ts'
+-import { MEASURE_STYLE, useStatDialog } from './stat-dialog.ts'
+ import css from './StatsPills.module.css'
+-import dialogCss from './stat-dialog.module.css'
+ 
+ interface WindowStats {
+   turns: number
+@@ -169,65 +166,15 @@ function decodeSpeed(stats: WindowStats, t: Translate): string {
+   })
+ }
+ 
+-/** A static reading: used when the pill has no dialog rows or the mode is Compact. */
+-function PlainPill({ stat, icon, label }: PillContent) {
+-  return (
+-    <span className={css.anchor} data-composer-stat={stat}>
+-      <span className={css.pill}>
+-        {icon}
+-        <span className={css.label}>{label}</span>
+-      </span>
+-    </span>
+-  )
+-}
+-
+-/**
+- * A pill button opening its own portaled dialog. Each pill owns its open
+- * state; useStatDialog closes it on Escape or an outside pointerdown or click,
+- * so at most one dialog is open across the dock.
+- */
+-function DialogPill({ stat, icon, label, ariaLabel, title, titleValue, children }: PillContent & {
++/** Chat data adapters delegate the display and dialog to the shared primitive. */
++function PlainPill({ stat, icon, label }: PillContent) { return <StatisticPill stat={stat} icon={icon} label={label} /> }
++function DialogPill({ children, title, titleValue, ...props }: PillContent & {
+   ariaLabel: string
+   title: string
+   titleValue?: string
+   children: ReactNode
+ }) {
+-  const { open, setOpen, rootRef, panelRef, pos } = useStatDialog()
+-  return (
+-    <span ref={rootRef} className={css.anchor} data-composer-stat={stat}>
+-      <button
+-        type="button"
+-        className={css.pill}
+-        aria-haspopup="dialog"
+-        aria-expanded={open}
+-        aria-label={ariaLabel}
+-        onClick={() => { setOpen(!open) }}
+-      >
+-        {icon}
+-        <span className={css.label}>{label}</span>
+-      </button>
+-      {open && createPortal(
+-        <div
+-          ref={panelRef}
+-          className={dialogCss.panel}
+-          role="dialog"
+-          aria-label={title}
+-          style={pos ?? MEASURE_STYLE}
+-        >
+-          <div className={dialogCss.title}>
+-            <span className={dialogCss.titleLabel}>
+-              {icon}
+-              {title}
+-            </span>
+-            {titleValue !== undefined && <span className={dialogCss.titleValue}>{titleValue}</span>}
+-          </div>
+-          <div className={dialogCss.titleRule} aria-hidden />
+-          {children}
+-        </div>,
+-        document.body,
+-      )}
+-    </span>
+-  )
++  return <StatisticPill {...props} details={{ title, ...(titleValue === undefined ? {} : { titleValue }), content: children }} />
+ }
+ 
+ /**
+@@ -248,7 +195,7 @@ export const ActivityPill = memo(function ActivityPill({ useChat, useProjection,
+   if (stats.llmMs <= 0 && stats.toolMs <= 0 && stats.ttftSteps <= 0 && speed === null) return <PlainPill {...content} />
+   return (
+     <DialogPill {...content} ariaLabel={speed === null ? counts : `${counts} · ${speed}`} title={t('stats.dialog.title')}>
+-      <dl className={dialogCss.details} data-session-stats-details>
++      <StatisticDetails data-session-stats-details>
+         {stats.llmMs > 0 && (
+           <>
+             <dt>{t('stats.dialog.llmTime')}</dt>
+@@ -273,7 +220,7 @@ export const ActivityPill = memo(function ActivityPill({ useChat, useProjection,
+             <dd>{speed}</dd>
+           </>
+         )}
+-      </dl>
++      </StatisticDetails>
+     </DialogPill>
+   )
+ })
+@@ -308,7 +255,7 @@ export const UsagePill = memo(function UsagePill({ useProjection, usePerformance
+           buckets are always present here; per-turn fields are optional). A
+           session that never wrote cache drops the row, as the per-turn panel
+           drops its absent fields. */}
+-      <dl className={dialogCss.details} data-session-stats-usage>
++      <StatisticDetails data-session-stats-usage>
+         {cacheHit !== null && (
+           <>
+             <dt>{t('message.turnUsage.cacheHit')}</dt>
+@@ -327,7 +274,7 @@ export const UsagePill = memo(function UsagePill({ useProjection, usePerformance
+         )}
+         <dt>{t('message.turnUsage.output')}</dt>
+         <dd>{exactCount(usage.outputTokens, t)}</dd>
+-      </dl>
++      </StatisticDetails>
+       {/* jscpd:ignore-end */}
+     </DialogPill>
+   )
+diff --git a/packages/client/ui-chat/src/client/chat/TurnUsagePanel.module.css b/packages/client/ui-chat/src/client/chat/TurnUsagePanel.module.css
+deleted file mode 100644
+index dfdfca258b..0000000000
+--- a/packages/client/ui-chat/src/client/chat/TurnUsagePanel.module.css
++++ /dev/null
+@@ -1,73 +0,0 @@
+-/* Icon-row Turn-usage pill (data icon + turn total); its click-open dialog
+-   wears the shared stat-dialog.module.css skin. */
+-
+-.root {
+-  display: inline-flex;
+-  min-width: 0;
+-}
+-
+-/* Adjacent stat pills (usage then time) rebate part of their combined internal
+-   padding so the pair reads as one cluster inside the row's 8px flex gap,
+-   while keeping 2px clear between their hover backgrounds. */
+-.root + .root {
+-  margin-left: -6px;
+-}
+-
+-/* The information pills use the action icons' resting color. */
+-.trigger {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 4px;
+-  min-width: 0;
+-  height: calc(28px + var(--dsh-content-font-delta, 0px));
+-  padding: 6px 8px;
+-  border: none;
+-  border-radius: var(--dsw-radius-sm);
+-  background: transparent;
+-  color: var(--dsw-alias-label-tertiary);
+-  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+-  font-variant-numeric: tabular-nums;
+-  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+-  white-space: nowrap;
+-  cursor: pointer;
+-}
+-
+-/* A narrow column trims the label to an ellipsis instead of overflowing the
+-   pill; the data glyph never shrinks. */
+-.label {
+-  min-width: 0;
+-  overflow: hidden;
+-  text-overflow: ellipsis;
+-}
+-
+-.trigger svg {
+-  width: calc(15px + var(--dsh-content-font-delta, 0px));
+-  height: calc(15px + var(--dsh-content-font-delta, 0px));
+-  flex: none;
+-}
+-
+-.trigger:hover,
+-.trigger[aria-expanded='true'] {
+-  background: var(--dsw-alias-interactive-bg-hover);
+-  color: var(--dsw-alias-label-tertiary);
+-}
+-
+-/* Narrow viewport: the pills collapse to bare icons with the sibling
+-   `.action` geometry (28px circle, 6px padding, centered glyph); the
+-   label-padding rebate no longer applies, so the pair keeps the row's plain
+-   8px rhythm. The dialogs keep the words. */
+-@media (max-width: 480px) {
+-  .trigger {
+-    justify-content: center;
+-    width: calc(28px + var(--dsh-content-font-delta, 0px));
+-    padding: 6px;
+-  }
+-
+-  .trigger .label {
+-    display: none;
+-  }
+-
+-  .root + .root {
+-    margin-left: 0;
+-  }
+-}
+diff --git a/packages/client/ui-chat/src/client/chat/TurnUsagePanel.tsx b/packages/client/ui-chat/src/client/chat/TurnUsagePanel.tsx
+index 460d1092a2..61e8f49595 100644
+--- a/packages/client/ui-chat/src/client/chat/TurnUsagePanel.tsx
++++ b/packages/client/ui-chat/src/client/chat/TurnUsagePanel.tsx
+@@ -1,13 +1,9 @@
+ /** Completed-Turn token usage action and its accounting details dialog. */
+ 
+-import { createPortal } from 'react-dom'
+-import { IconDatabaseOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
++import { IconDatabaseOutlineRegular, StatisticPill, StatisticDetails } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { TurnTokenUsage } from '../contract/chat-nodes.ts'
+ import type { ChatViewSlotProps } from '../contract/slots.ts'
+ import { formatCacheHitPercent, formatExactTokens, formatTokens } from './token-format.ts'
+-import { MEASURE_STYLE, useStatDialog } from './stat-dialog.ts'
+-import css from './TurnUsagePanel.module.css'
+-import dialogCss from './stat-dialog.module.css'
+ 
+ export interface TurnUsagePanelProps {
+   usage: TurnTokenUsage
+@@ -29,7 +25,6 @@ function formatExactCount(value: number, t: ChatViewSlotProps['t']): string {
+  * @returns The trigger and, while open, its portaled dialog anchored above the trigger.
+  */
+ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
+-  const { open, setOpen, rootRef, panelRef, pos } = useStatDialog()
+ 
+   const cacheHit = usage.cacheReadTokens === undefined
+     ? null
+@@ -38,38 +33,15 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
+   const routes = usage.routes?.map(route => `${route.provider}/${route.model}`).join(', ') ?? ''
+ 
+   return (
+-    <span ref={rootRef} className={css.root}>
+-      <button
+-        type="button"
+-        className={css.trigger}
+-        aria-haspopup="dialog"
+-        aria-expanded={open}
+-        onClick={() => { setOpen(!open) }}
+-      >
+-        <IconDatabaseOutlineRegular />
+-        <span className={css.label}>{t('message.turnUsage.consumed', { total })}</span>
+-      </button>
+-      {open && createPortal(
+-        <div
+-          ref={panelRef}
+-          className={dialogCss.panel}
+-          role="dialog"
+-          aria-label={t('message.turnUsage.title')}
+-          style={pos ?? MEASURE_STYLE}
+-        >
+-          <div className={dialogCss.title}>
+-            <span className={dialogCss.titleLabel}>
+-              <IconDatabaseOutlineRegular />
+-              {t('message.turnUsage.title')}
+-            </span>
+-            <span className={dialogCss.titleValue}>{formatExactCount(usage.totalTokens, t)}</span>
+-          </div>
+-          <div className={dialogCss.titleRule} aria-hidden />
+-          <dl className={dialogCss.details} data-turn-usage-details>
++    <StatisticPill appearance="inline" icon={<IconDatabaseOutlineRegular />}
++      label={t('message.turnUsage.consumed', { total })}
++      ariaLabel={t('message.turnUsage.consumed', { total })}
++      details={{ title: t('message.turnUsage.title'), titleValue: formatExactCount(usage.totalTokens, t), content:
++          <StatisticDetails data-turn-usage-details>
+             {routes !== '' && (
+               <>
+                 <dt>{t('message.turnUsage.model')}</dt>
+-                <dd className={dialogCss.route}>{routes}</dd>
++                <dd>{routes}</dd>
+               </>
+             )}
+             {cacheHit !== null && (
+@@ -96,15 +68,12 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
+             <dd>
+               {formatExactCount(usage.outputTokens, t)}
+               {usage.reasoningTokens !== undefined && (
+-                <span className={dialogCss.reasoning}>
++                <span>
+                   {t('message.turnUsage.reasoning', { tokens: formatExactCount(usage.reasoningTokens, t) })}
+                 </span>
+               )}
+             </dd>
+-          </dl>
+-        </div>,
+-        document.body,
+-      )}
+-    </span>
++          </StatisticDetails>,
++      }} />
+   )
+ }
+diff --git a/packages/client/ui-chat/src/client/chat/message-chrome.ts b/packages/client/ui-chat/src/client/chat/message-chrome.ts
+index e078d28177..239390a3c5 100644
+--- a/packages/client/ui-chat/src/client/chat/message-chrome.ts
++++ b/packages/client/ui-chat/src/client/chat/message-chrome.ts
+@@ -63,15 +63,7 @@ export function formatRunDuration(ms: number, t: RunDurationTranslate): RunDurat
+   return parts
+ }
+ 
+-/**
+- * Decode-throughput figure: whole tokens from ten up, one decimal below.
+- * @param tps - Tokens per second.
+- * @returns Display number without unit.
+- */
+-export function formatTokensPerSecond(tps: number): string {
+-  const clamped = Math.max(0, tps)
+-  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
+-}
++export { formatTokensPerSecond } from '@deepseek-ai/dsh-client-ui-primitives'
+ 
+ /**
+  * Compact local timestamp for message IconActions. Same calendar day →
+diff --git a/packages/client/ui-chat/src/client/chat/stat-dialog.ts b/packages/client/ui-chat/src/client/chat/stat-dialog.ts
+deleted file mode 100644
+index 43ee6cd220..0000000000
+--- a/packages/client/ui-chat/src/client/chat/stat-dialog.ts
++++ /dev/null
+@@ -1,76 +0,0 @@
+-// One trigger-anchored stat dialog seat shared by the Turn-stat pills
+-// (TurnUsagePanel) and the composer-dock session stats pills (StatsPills.tsx);
+-// the matching dialog surface skin lives in stat-dialog.module.css.
+-
+-import { useEffect, useRef, useState, type CSSProperties, type MutableRefObject } from 'react'
+-import { useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+-
+-/** Viewport margin the placement clamp keeps (the Menu portal margin). */
+-const PANEL_MARGIN = 12
+-
+-/** Distance between the trigger's top edge and the panel's bottom. */
+-const PANEL_GAP = 8
+-
+-/**
+- * Unplaced portal panel: hidden but laid out so the clamp measures real
+- * dimensions (the `useAnchoredPosition` measure pass).
+- */
+-export const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
+-
+-/** Open state, refs, and clamped placement for one stat dialog. */
+-export interface StatDialogSeat {
+-  open: boolean
+-  setOpen: (open: boolean) => void
+-  rootRef: MutableRefObject<HTMLSpanElement | null>
+-  panelRef: MutableRefObject<HTMLDivElement | null>
+-  pos: CSSProperties | null
+-}
+-
+-/**
+- * One trigger-anchored dialog seat: open state, viewport-clamped placement, outside-close.
+- * @returns the seat; spread `pos ?? MEASURE_STYLE` onto the portaled panel.
+- */
+-export function useStatDialog(): StatDialogSeat {
+-  const [open, setOpen] = useState(false)
+-  const rootRef = useRef<HTMLSpanElement | null>(null)
+-  const panelRef = useRef<HTMLDivElement | null>(null)
+-
+-  // Portal placement: the dialog is fixed above the trigger and clamped inside
+-  // the viewport, so a trigger near the window edge cannot push it off-screen.
+-  const pos = useAnchoredPosition({
+-    open,
+-    anchorRef: rootRef,
+-    panelRef,
+-    side: 'top',
+-    gap: PANEL_GAP,
+-    margin: PANEL_MARGIN,
+-  })
+-
+-  // Outside pointerdown closes through the shared primitive; the portaled
+-  // panel counts as inside. An outside click also closes, because keyboard
+-  // activation of a sibling trigger fires click without pointerdown; the
+-  // capture phase lets that click close this dialog before the sibling opens.
+-  // Escape closes.
+-  useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
+-  useEffect(() => {
+-    if (!open) return
+-    const onKeyDown = (e: KeyboardEvent): void => {
+-      if (e.key === 'Escape') setOpen(false)
+-    }
+-    const onClick = (e: MouseEvent): void => {
+-      if (e.target instanceof Node
+-        && rootRef.current?.contains(e.target) !== true
+-        && panelRef.current?.contains(e.target) !== true) {
+-        setOpen(false)
+-      }
+-    }
+-    document.addEventListener('keydown', onKeyDown)
+-    document.addEventListener('click', onClick, true)
+-    return () => {
+-      document.removeEventListener('keydown', onKeyDown)
+-      document.removeEventListener('click', onClick, true)
+-    }
+-  }, [open, setOpen])
+-
+-  return { open, setOpen, rootRef, panelRef, pos }
+-}
+diff --git a/packages/client/ui-chat/src/client/chat/token-format.ts b/packages/client/ui-chat/src/client/chat/token-format.ts
+index 20936ff2f1..0223d2ac0b 100644
+--- a/packages/client/ui-chat/src/client/chat/token-format.ts
++++ b/packages/client/ui-chat/src/client/chat/token-format.ts
+@@ -1,98 +1,8 @@
++/** Chat locale adapters for the shared statistic number algorithms. */
++import { formatTokens as compact, formatExactTokens as exact } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { ChatViewSlotProps } from '../contract/slots.ts'
+-
+-/**
+- * Compact token count: 517 / 12.2K / 517K / 1.2M.
+- * @param value - non-negative token count.
+- * @param t - Chat locale seat.
+- * @returns locale-owned compact display string.
+- */
+-export function formatTokens(value: number, t: ChatViewSlotProps['t']): string {
+-  const scaled = (candidate: number): string =>
+-    candidate >= 100 ? String(Math.round(candidate)) : String(Math.round(candidate * 10) / 10)
+-  if (value < 1_000) return String(value)
+-  if (value < 1_000_000) return t('number.thousand', { value: scaled(value / 1_000) })
+-  return t('number.million', { value: scaled(value / 1_000_000) })
+-}
+-
+-/**
+- * Exact integer token count with locale-owned digit grouping.
+- * @param value - non-negative safe integer token count.
+- * @param t - Chat locale seat.
+- * @returns an unrounded display string.
+- */
+-export function formatExactTokens(value: number, t: ChatViewSlotProps['t']): string {
+-  const digits = String(value)
+-  const groups: string[] = []
+-  for (let end = digits.length; end > 0; end -= 3) {
+-    groups.unshift(digits.slice(Math.max(0, end - 3), end))
+-  }
+-  return groups.join(t('number.groupSeparator'))
+-}
+-
+-/** Round a cache-read ratio to exact percentage units, with positive ties rounded up. */
+-function roundedPercentUnits(cacheReadTokens: number, denominator: number, decimalPlaces: 0 | 1): number {
+-  const unitsPerPercent = decimalPlaces === 0 ? 1 : 10
+-  const scale = unitsPerPercent * 100
+-  const doubledScale = scale * 2
+-  const denominatorQuotient = Math.floor(denominator / doubledScale)
+-  const denominatorRemainder = denominator % doubledScale
+-  let lower = 0
+-  let upper = scale
+-  while (lower < upper) {
+-    const candidate = Math.floor((lower + upper + 1) / 2)
+-    const factor = candidate * 2 - 1
+-    const threshold = factor * denominatorQuotient
+-      + Math.ceil(factor * denominatorRemainder / doubledScale)
+-    if (cacheReadTokens >= threshold) lower = candidate
+-    else upper = candidate - 1
+-  }
+-  return lower
+-}
+-
+-function displayPercentUnits(units: number, decimalPlaces: 0 | 1): string {
+-  if (decimalPlaces === 0) return String(units)
+-  const whole = Math.floor(units / 10)
+-  const tenths = units % 10
+-  return tenths === 0 ? String(whole) : `${whole}.${tenths}`
+-}
+-
+-/**
+- * Display-ready cache-hit share without rounding a partial hit to 100%.
+- * @param cacheReadTokens - exact prompt tokens served from cache.
+- * @param promptTokens - exact aggregate prompt tokens.
+- * @param decimalPlaces - ordinary-ratio precision; partial hits that would
+- * round to 100 automatically use enough additional precision to stay honest.
+- * @returns percentage text, or null when there was no prompt input.
+- */
+-export function formatCacheHitPercent(
+-  cacheReadTokens: number,
+-  promptTokens: number,
+-  decimalPlaces: 0 | 1 = 0,
+-): string | null {
+-  if (promptTokens === 0) return null
+-  const missedInputTokens = promptTokens - cacheReadTokens
+-  if (missedInputTokens === 0) return '100'
+-
+-  const roundedUnits = roundedPercentUnits(cacheReadTokens, promptTokens, decimalPlaces)
+-  const fullHitUnits = decimalPlaces === 0 ? 100 : 1_000
+-  if (roundedUnits < fullHitUnits) return displayPercentUnits(roundedUnits, decimalPlaces)
+-
+-  let distinguishingPlaces = 1
+-  let scaledDoubleGap = missedInputTokens * 200
+-  const denominatorTens = Math.floor(promptTokens / 10)
+-  while (scaledDoubleGap <= denominatorTens) {
+-    scaledDoubleGap *= 10
+-    distinguishingPlaces += 1
+-  }
+-  const denominatorOnes = promptTokens % 10
+-  let roundedLoss = 5
+-  for (let loss = 1; loss < 5; loss += 1) {
+-    const factor = loss * 2 + 1
+-    const threshold = factor * denominatorTens + Math.floor(factor * denominatorOnes / 10)
+-    if (scaledDoubleGap <= threshold) {
+-      roundedLoss = loss
+-      break
+-    }
+-  }
+-  return `99.${'9'.repeat(distinguishingPlaces - 1)}${10 - roundedLoss}`
+-}
++export { formatCacheHitPercent } from '@deepseek-ai/dsh-client-ui-primitives'
++/** @param value - token count. @param t - locale seat. @returns compact count. */
++export function formatTokens(value: number, t: ChatViewSlotProps['t']): string { return compact(value, t) }
++/** @param value - token count. @param t - locale seat. @returns exact count. */
++export function formatExactTokens(value: number, t: ChatViewSlotProps['t']): string { return exact(value, t) }
+diff --git a/packages/client/ui-chat/tests/chat-font-axis-styles.client.spec.ts b/packages/client/ui-chat/tests/chat-font-axis-styles.client.spec.ts
+index de1f0688dd..2cb77981d6 100644
+--- a/packages/client/ui-chat/tests/chat-font-axis-styles.client.spec.ts
++++ b/packages/client/ui-chat/tests/chat-font-axis-styles.client.spec.ts
+@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs'
+ import { fileURLToPath } from 'node:url'
+ import { describe, expect, it } from 'vitest'
+ 
++const statisticStyles = (): string => readFileSync(fileURLToPath(new URL('../../ui-primitives/src/StatisticPill.module.css', import.meta.url)), 'utf8')
++
+ const read = (name: string): string =>
+   readFileSync(fileURLToPath(new URL(`../src/client/chat/${name}`, import.meta.url)), 'utf8')
+ 
+@@ -89,8 +91,8 @@ describe('chat flow font-size axis', () => {
+   })
+ 
+   it('the usage-details trigger reads the secondary tier like its clock label', () => {
+-    const css = read('TurnUsagePanel.module.css')
+-    expect(declarationsFrom(css, '.trigger')).toEqual(expect.arrayContaining([
++    const css = statisticStyles()
++    expect(declarationsFrom(css, '.inline .pill')).toEqual(expect.arrayContaining([
+       'font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px)',
+       'line-height: calc(24px + var(--dsh-content-font-delta, 0px))',
+     ]))
+@@ -100,13 +102,13 @@ describe('chat flow font-size axis', () => {
+     // The pill sits in the icon row right of the branch action; its data glyph
+     // and 28px hit height follow the same delta rule as `.action` so the row
+     // stays one height at every font size.
+-    const css = read('TurnUsagePanel.module.css')
+-    expect(declarationsFrom(css, '.trigger')).toEqual(expect.arrayContaining([
++    const css = statisticStyles()
++    expect(declarationsFrom(css, '.inline .pill')).toEqual(expect.arrayContaining([
+       'height: calc(28px + var(--dsh-content-font-delta, 0px))',
+       'white-space: nowrap',
+       'min-width: 0',
+     ]))
+-    expect(declarationsFrom(css, '.trigger svg')).toEqual(expect.arrayContaining([
++    expect(declarationsFrom(css, '.inline .pill svg')).toEqual(expect.arrayContaining([
+       'width: calc(15px + var(--dsh-content-font-delta, 0px))',
+       'height: calc(15px + var(--dsh-content-font-delta, 0px))',
+     ]))
+@@ -124,13 +126,13 @@ describe('chat flow font-size axis', () => {
+     // geometry (28px width, 6px padding, centered glyph); the -6px
+     // label-padding rebate between adjacent pills resets so the icon pair
+     // keeps the row's plain 8px rhythm instead of overlapping.
+-    const css = read('TurnUsagePanel.module.css')
++    const css = statisticStyles()
+     const narrow = /@media \(max-width: 480px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+-    expect(narrow).toMatch(/\.trigger \{[^}]*justify-content: center/)
+-    expect(narrow).toMatch(/\.trigger \{[^}]*width: calc\(28px \+ var\(--dsh-content-font-delta, 0px\)\)/)
+-    expect(narrow).toMatch(/\.trigger \{[^}]*padding: 6px/)
+-    expect(narrow).toMatch(/\.trigger \.label \{[^}]*display: none/)
+-    expect(narrow).toMatch(/\.root \+ \.root \{[^}]*margin-left: 0/)
++    expect(narrow).toMatch(/\.inline \.pill \{[^}]*justify-content: center/)
++    expect(narrow).toMatch(/\.inline \.pill \{[^}]*width: calc\(28px \+ var\(--dsh-content-font-delta, 0px\)\)/)
++    expect(narrow).toMatch(/\.inline \.pill \{[^}]*padding: 6px/)
++    expect(narrow).toMatch(/\.inline \.pill \.label \{[^}]*display: none/)
++    expect(narrow).toMatch(/\.inline \+ \.inline \{[^}]*margin-left: 0/)
+   })
+ 
+   it('non-latest turn tails hide the whole actions row until hover or focus', () => {
+diff --git a/packages/client/ui-primitives/README.md b/packages/client/ui-primitives/README.md
+index 5b29187be1..d7a4c67226 100644
+--- a/packages/client/ui-primitives/README.md
++++ b/packages/client/ui-primitives/README.md
+@@ -40,6 +40,7 @@ Check this table before writing a control in a feature package. A plugin cannot
+ 
+ | Export | What it is |
+ |---|---|
++| `StatisticPill`, `StatisticDetails` | Store-free statistics readings and an anchored details dialog; owners provide localized labels and rows. `appearance` selects composer-dock or inline geometry. Shared token/cache/throughput formatters preserve exact accounting semantics. |
+ | `Button` | Clickable action; `variant` selects `primary`, `ghost`, `outline`, or `toolbar`. Its ref targets the native button for focus and overlay anchoring. |
+ | `Switch` | Two-state toggle, 36×20. The off-state thumb reads `--dsw-alias-switch-thumb` so it stays light in both themes, and the on-state thumb contrasts with the brand track. Disabled controls use half opacity. `label` is required, so the control cannot ship unnamed. |
+ | `SegmentedControl` | Tablist of two or more equal-width segments with one sliding indicator, for switching a card or panel between a few modes; the owner holds the selection and `label` names the list. `id` seeds each tab's id (`<id>-<value>`) and the panel it controls (`<id>-<value>-panel`), which the owner renders and points back at the tab with `aria-labelledby`; a segment may be `disabled` with a `title`, and `disabled` on the control locks every segment while the shown panel has work in flight. |
+diff --git a/packages/client/ui-chat/src/client/chat/stat-dialog.module.css b/packages/client/ui-primitives/src/StatisticPill.module.css
+similarity index 54%
+rename from packages/client/ui-chat/src/client/chat/stat-dialog.module.css
+rename to packages/client/ui-primitives/src/StatisticPill.module.css
+index 4c5de52c51..87e01f7ff6 100644
+--- a/packages/client/ui-chat/src/client/chat/stat-dialog.module.css
++++ b/packages/client/ui-primitives/src/StatisticPill.module.css
+@@ -1,7 +1,54 @@
+-/* Stat-dialog surface skin shared by the Turn-stat pills (TurnUsagePanel) and
+-   the session stats pills (StatsPills.tsx): menu surface, elevation-prominent
+-   — ContextMeter's panel skin. Placement comes from useStatDialog
+-   (stat-dialog.ts). */
++/* Shared statistic readings and dialogs; all content comes from the owner. */
++
++/* Entry root and dialog anchor: shrink-wraps its pill so the panel clamp
++   measures the pill. */
++.anchor {
++  display: inline-flex;
++  min-width: 0;
++  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
++  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
++}
++
++.pill {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  box-sizing: border-box;
++  max-width: 100%;
++  padding: 1px 8px;
++  border: none;
++  border-radius: var(--dsw-radius-sm);
++  background: transparent;
++  color: var(--dsw-alias-label-tertiary);
++  font: inherit;
++  font-variant-numeric: tabular-nums;
++  line-height: inherit;
++  white-space: nowrap;
++}
++
++.pill svg {
++  width: 14px;
++  height: 14px;
++  flex: none;
++}
++
++/* Only the button form (a pill with dialog rows to open) invites interaction;
++   the static span form keeps the resting tertiary reading. */
++button.pill {
++  cursor: pointer;
++}
++
++button.pill:hover,
++button.pill[aria-expanded='true'] {
++  background: var(--dsw-alias-interactive-bg-hover);
++  color: var(--dsw-alias-label-secondary);
++}
++
++.label {
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
+ 
+ /* Portal surface: fixed in the viewport, left/top supplied inline from the
+    anchored-position clamp so the panel keeps its 12px viewport margin instead
+@@ -85,11 +132,31 @@
+   text-align: right;
+ }
+ 
+-.details .route {
++.details dd {
+   overflow-wrap: anywhere;
+ }
+ 
+-.reasoning {
+-  color: var(--dsw-alias-label-tertiary);
++
++.inline .pill {
++  gap: 4px;
++  min-width: 0;
++  height: calc(28px + var(--dsh-content-font-delta, 0px));
++  padding: 6px 8px;
++  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
++  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+   white-space: nowrap;
+ }
++.inline .pill svg {
++  width: calc(15px + var(--dsh-content-font-delta, 0px));
++  height: calc(15px + var(--dsh-content-font-delta, 0px));
++}
++.inline + .inline { margin-left: -6px; }
++@media (max-width: 480px) {
++  .inline .pill {
++    justify-content: center;
++    width: calc(28px + var(--dsh-content-font-delta, 0px));
++    padding: 6px;
++  }
++  .inline .pill .label { display: none; }
++  .inline + .inline { margin-left: 0; }
++}
+diff --git a/packages/client/ui-primitives/src/StatisticPill.tsx b/packages/client/ui-primitives/src/StatisticPill.tsx
+new file mode 100644
+index 0000000000..22e8e53402
+--- /dev/null
++++ b/packages/client/ui-primitives/src/StatisticPill.tsx
+@@ -0,0 +1,62 @@
++/** Locale-free statistic readings and their viewport-anchored details. */
++import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react'
++import { createPortal } from 'react-dom'
++import clsx from 'clsx'
++import { useAnchoredPosition } from './useAnchoredPosition.ts'
++import { useDismissOnOutsidePointer } from './useDismissOnOutsidePointer.ts'
++import css from './StatisticPill.module.css'
++
++/** The owner supplies labels, values and detail content; no business store is read. */
++export interface StatisticPillProps {
++  readonly stat?: string
++  readonly icon: ReactNode
++  readonly label: ReactNode
++  readonly ariaLabel?: string
++  readonly appearance?: 'dock' | 'inline'
++  readonly details?: { readonly title: string; readonly titleValue?: string; readonly content: ReactNode } | undefined
++}
++
++/**
++ * A static reading or a button opening a shared statistic details surface.
++ * @param props - localized display content.
++ * @returns the reading and its optional portaled dialog.
++ */
++export function StatisticPill({ stat, icon, label, ariaLabel, appearance = 'dock', details }: StatisticPillProps): ReactNode {
++  const [open, setOpen] = useState(false)
++  const rootRef = useRef<HTMLSpanElement | null>(null)
++  const panelRef = useRef<HTMLDivElement | null>(null)
++  const pos = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, side: 'top', gap: 8, margin: 12 })
++  useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
++  useEffect(() => {
++    if (!open) return
++    const key = (event: KeyboardEvent): void => { if (event.key === 'Escape') setOpen(false) }
++    const click = (event: MouseEvent): void => {
++      if (event.target instanceof Node
++        && !rootRef.current?.contains(event.target)
++        && !panelRef.current?.contains(event.target)) setOpen(false)
++    }
++    document.addEventListener('keydown', key)
++    document.addEventListener('click', click, true)
++    return () => { document.removeEventListener('keydown', key); document.removeEventListener('click', click, true) }
++  }, [open])
++  const content = <>{icon}<span className={css.label}>{label}</span></>
++  return <span ref={rootRef} className={clsx(css.anchor, appearance === 'inline' && css.inline)} data-composer-stat={stat}>
++    {details === undefined ? <span className={css.pill}>{content}</span> : <button type="button" className={css.pill}
++      aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(!open) }}>{content}</button>}
++    {open && details !== undefined && createPortal(<div ref={panelRef} className={css.panel} role="dialog"
++      aria-label={details.title} style={pos ?? { visibility: 'hidden', left: 0, top: 0 }}>
++      <div className={css.title}><span className={css.titleLabel}>{icon}{details.title}</span>
++        {details.titleValue !== undefined && <span className={css.titleValue}>{details.titleValue}</span>}</div>
++      <div className={css.titleRule} aria-hidden />{details.content}
++    </div>, document.body)}
++  </span>
++}
++
++/**
++ * Shared definition-list skin. Owners retain their localized rows and semantic attributes.
++ * @param props - definition-list contents and attributes.
++ * @returns a styled definition list.
++ */
++export function StatisticDetails({ className, ...props }: HTMLAttributes<HTMLDListElement>): ReactNode {
++  return <dl {...props} className={clsx(css.details, className)} />
++}
+diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
+index 18f9544405..116a0bf528 100644
+--- a/packages/client/ui-primitives/src/index.ts
++++ b/packages/client/ui-primitives/src/index.ts
+@@ -117,3 +117,8 @@ export {
+ export { GuideArtworkBrowser, GuideArtworkFiles } from './guide-artwork.tsx'
+ export { ImageLightbox } from './ImageLightbox.tsx'
+ export type { ImageLightboxLabels } from './ImageLightbox.tsx'
++
++export { StatisticPill, StatisticDetails } from './StatisticPill.tsx'
++export type { StatisticPillProps } from './StatisticPill.tsx'
++export { formatTokens, formatExactTokens, formatCacheHitPercent, formatTokensPerSecond } from './statistic-format.ts'
++export type { StatisticNumberTranslate } from './statistic-format.ts'
+diff --git a/packages/client/ui-primitives/src/statistic-format.ts b/packages/client/ui-primitives/src/statistic-format.ts
+new file mode 100644
+index 0000000000..28659b583d
+--- /dev/null
++++ b/packages/client/ui-primitives/src/statistic-format.ts
+@@ -0,0 +1,109 @@
++/** Locale-free number algorithms used by statistic consumers. */
++export type StatisticNumberTranslate = (key: 'number.thousand' | 'number.million' | 'number.groupSeparator', params?: { value: string }) => string
++
++/**
++ * Compact token count: 517 / 12.2K / 517K / 1.2M.
++ * @param value - non-negative token count.
++ * @param t - Caller-owned number translations.
++ * @returns locale-owned compact display string.
++ */
++export function formatTokens(value: number, t: StatisticNumberTranslate): string {
++  const scaled = (candidate: number): string =>
++    candidate >= 100 ? String(Math.round(candidate)) : String(Math.round(candidate * 10) / 10)
++  if (value < 1_000) return String(value)
++  if (value < 1_000_000) return t('number.thousand', { value: scaled(value / 1_000) })
++  return t('number.million', { value: scaled(value / 1_000_000) })
++}
++
++/**
++ * Exact integer token count with locale-owned digit grouping.
++ * @param value - non-negative safe integer token count.
++ * @param t - Caller-owned number translations.
++ * @returns an unrounded display string.
++ */
++export function formatExactTokens(value: number, t: StatisticNumberTranslate): string {
++  const digits = String(value)
++  const groups: string[] = []
++  for (let end = digits.length; end > 0; end -= 3) {
++    groups.unshift(digits.slice(Math.max(0, end - 3), end))
++  }
++  return groups.join(t('number.groupSeparator'))
++}
++
++/** Round a cache-read ratio to exact percentage units, with positive ties rounded up. */
++function roundedPercentUnits(cacheReadTokens: number, denominator: number, decimalPlaces: 0 | 1): number {
++  const unitsPerPercent = decimalPlaces === 0 ? 1 : 10
++  const scale = unitsPerPercent * 100
++  const doubledScale = scale * 2
++  const denominatorQuotient = Math.floor(denominator / doubledScale)
++  const denominatorRemainder = denominator % doubledScale
++  let lower = 0
++  let upper = scale
++  while (lower < upper) {
++    const candidate = Math.floor((lower + upper + 1) / 2)
++    const factor = candidate * 2 - 1
++    const threshold = factor * denominatorQuotient
++      + Math.ceil(factor * denominatorRemainder / doubledScale)
++    if (cacheReadTokens >= threshold) lower = candidate
++    else upper = candidate - 1
++  }
++  return lower
++}
++
++function displayPercentUnits(units: number, decimalPlaces: 0 | 1): string {
++  if (decimalPlaces === 0) return String(units)
++  const whole = Math.floor(units / 10)
++  const tenths = units % 10
++  return tenths === 0 ? String(whole) : `${whole}.${tenths}`
++}
++
++/**
++ * Display-ready cache-hit share without rounding a partial hit to 100%.
++ * @param cacheReadTokens - exact prompt tokens served from cache.
++ * @param promptTokens - exact aggregate prompt tokens.
++ * @param decimalPlaces - ordinary-ratio precision; partial hits that would
++ * round to 100 automatically use enough additional precision to stay honest.
++ * @returns percentage text, or null when there was no prompt input.
++ */
++export function formatCacheHitPercent(
++  cacheReadTokens: number,
++  promptTokens: number,
++  decimalPlaces: 0 | 1 = 0,
++): string | null {
++  if (promptTokens === 0) return null
++  const missedInputTokens = promptTokens - cacheReadTokens
++  if (missedInputTokens === 0) return '100'
++
++  const roundedUnits = roundedPercentUnits(cacheReadTokens, promptTokens, decimalPlaces)
++  const fullHitUnits = decimalPlaces === 0 ? 100 : 1_000
++  if (roundedUnits < fullHitUnits) return displayPercentUnits(roundedUnits, decimalPlaces)
++
++  let distinguishingPlaces = 1
++  let scaledDoubleGap = missedInputTokens * 200
++  const denominatorTens = Math.floor(promptTokens / 10)
++  while (scaledDoubleGap <= denominatorTens) {
++    scaledDoubleGap *= 10
++    distinguishingPlaces += 1
++  }
++  const denominatorOnes = promptTokens % 10
++  let roundedLoss = 5
++  for (let loss = 1; loss < 5; loss += 1) {
++    const factor = loss * 2 + 1
++    const threshold = factor * denominatorTens + Math.floor(factor * denominatorOnes / 10)
++    if (scaledDoubleGap <= threshold) {
++      roundedLoss = loss
++      break
++    }
++  }
++  return `99.${'9'.repeat(distinguishingPlaces - 1)}${10 - roundedLoss}`
++}
++
++/**
++ * Decode-throughput figure: whole tokens from ten up, one decimal below.
++ * @param tps - Tokens per second.
++ * @returns Display number without unit.
++ */
++export function formatTokensPerSecond(tps: number): string {
++  const clamped = Math.max(0, tps)
++  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
++}
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 8fe84867a0..3c8834bb5b 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -4120,19 +4120,34 @@ importers:
+ 
+   packages/client/ui-fish:
+     dependencies:
++      '@deepseek-ai/dsh-typert-protocol':
++        specifier: workspace:*
++        version: link:../../typert/protocol
+       '@deepseek-ai/schemastery':
+         specifier: link:../../../vendor/schemastery
+         version: link:../../../vendor/schemastery
++      zod:
++        specifier: 4.4.3
++        version: 4.4.3
+     devDependencies:
++      '@deepseek-ai/dsh-api-remotes':
++        specifier: workspace:*
++        version: link:../../api/remotes
+       '@deepseek-ai/cordis':
+         specifier: workspace:~
+         version: link:../../../vendor/cordis
++      '@deepseek-ai/dsh-brand':
++        specifier: workspace:*
++        version: link:../../util/brand
+       '@deepseek-ai/dsh-client-locale':
+         specifier: workspace:*
+         version: link:../locale
+-      '@deepseek-ai/dsh-client-store':
++      '@deepseek-ai/dsh-client-resources':
+         specifier: workspace:*
+-        version: link:../store
++        version: link:../resources
++      '@deepseek-ai/dsh-client-test-runtime':
++        specifier: workspace:*
++        version: link:../../test-support/client-runtime
+       '@deepseek-ai/dsh-client-ui-layout':
+         specifier: workspace:*
+         version: link:../ui-layout
+@@ -4148,9 +4163,9 @@ importers:
+       '@deepseek-ai/dsh-client-ui-slots':
+         specifier: workspace:*
+         version: link:../ui-slots
+-      '@deepseek-ai/dsh-host-webserver':
++      '@deepseek-ai/dsh-typert-protocol':
+         specifier: workspace:*
+-        version: link:../../host/webserver
++        version: link:../../typert/protocol
+       clsx:
+         specifier: ^2.1.1
+         version: 2.1.1

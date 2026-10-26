@@ -1,5 +1,5 @@
 /**
- * Read-only truth of one whitelisted group as the backend policy decides it:
+ * Read-only truth of this instance's group as the backend policy decides it:
  * the engine that reads the message, and the listen, reply, and learn flags.
  * It is the one place that reports it: the Channels page is gone and Settings
  * shows these rows beside the switches that write them.

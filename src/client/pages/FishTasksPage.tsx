@@ -1,17 +1,16 @@
 /**
- * Tasks: shared Fish plan CRUD and execution records, including reminders and autonomous opportunities.
- * The scheduled messages one can still
- * create. Computer tasks are delegated by talking to her in the private chat,
- * so this page lists what ran instead of offering a submission form; a
- * scheduled message keeps one timing choice (delay, once at a local date/time,
- * daily, weekly, or fixed interval) mapping one-to-one onto the workbench
- * `schedules.create` selectors. The list refreshes after each accepted write;
- * a refused write renders its reason above the list.
+ * Tasks: Fish's computer-task records, scheduled plans, and Fish's own
+ * workspace in one page. Plans are created and edited here through the same
+ * `schedules.*` records the chat uses. Each row shows the backend's real state,
+ * next run, purpose/target, and newest instance; "view this turn" follows the
+ * instance's execution id to `turn.view`. A paused plan can run once without
+ * being resumed, and editing it keeps it paused because update never sends a
+ * state change. The page owns no timer and no second queue: it only calls the
+ * workbench and re-reads the list after an accepted write.
  */
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  Button, Checkbox, IconClockOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
-  IconWarningOutlineRegular, Input, StateDot, Tag, type StateDotState,
+  Button, Checkbox, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconWarningOutlineRegular, Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FishFailure, FishResult } from '../contract/slots.ts'
 import type { FishTask } from '../contract/workbench.ts'
@@ -22,6 +21,8 @@ import { PageHint } from './PageHint.tsx'
 import css from './pages.module.css'
 import { DelegationTasks } from './DelegationTasks.tsx'
 import taskCss from './DelegationTasks.module.css'
+import { PlanRow, planStateText } from './PlanRow.tsx'
+import { WorkspaceFiles } from './WorkspaceFiles.tsx'
 
 /** Zone the local wall-clock selectors (`at`, `daily`, `weekly`) are expressed in, matching the console's timestamp zone. */
 const TIME_ZONE = 'Asia/Shanghai'
@@ -49,71 +50,6 @@ function failureText<T>(result: FishResult<T>): FishFailure | null {
 /** Short text of a thrown value. */
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-/** The dot each task status renders; unknown statuses read as idle. */
-function statusDot(status: string): StateDotState {
-  switch (status) {
-    case 'done':
-    case 'complete':
-    case 'completed':
-      return 'done'
-    case 'pending':
-    case 'queued':
-    case 'scheduled':
-    case 'overdue':
-      return 'warning'
-    case 'running':
-      return 'ongoing'
-    case 'failed':
-    case 'error':
-      return 'error'
-    default:
-      return 'idle'
-  }
-}
-
-/** The tag tone each task status renders. */
-function statusTone(status: string): 'success' | 'warning' | 'danger' | 'outline' {
-  switch (statusDot(status)) {
-    case 'done':
-      return 'success'
-    case 'warning':
-    case 'ongoing':
-      return 'warning'
-    case 'error':
-      return 'danger'
-    default:
-      return 'outline'
-  }
-}
-
-/** String, number, or array field rendered as short text; undefined when absent. */
-function fieldText(task: FishTask, key: string): string | undefined {
-  const value = task[key]
-  if (typeof value === 'string') return value === '' ? undefined : value
-  if (typeof value === 'number') return String(value)
-  if (Array.isArray(value)) return value.length === 0 ? undefined : value.map(item => String(item)).join(', ')
-  return undefined
-}
-
-/** Seconds from now until a task's schedule, when one is recorded. */
-function dueText(task: FishTask, formatTimestamp: FishPageProps['formatTimestamp']): string | null {
-  for (const key of ['scheduled_at', 'scheduledAt', 'run_at', 'runAt', 'due_at', 'dueAt', 'after', 'when']) {
-    const value = task[key]
-    if (typeof value === 'string' && value !== '') return formatTimestamp(value)
-    if (typeof value === 'number') return formatTimestamp(value)
-  }
-  return null
-}
-
-/** First field of the task whose value is non-empty, or undefined. */
-function firstField(task: FishTask, keys: readonly string[]): string | undefined {
-  for (const key of keys) {
-    const value = fieldText(task, key)
-    if (value !== undefined) return value
-  }
-  return undefined
 }
 
 /** `HH:mm` from an `HH:mm`, `HH:mm:ss`, or `HH:mm:ss.SSS` local time. */
@@ -192,56 +128,24 @@ function timingOf(
   }
 }
 
+/** One plan's row failure, kept beside that plan. */
+interface RowFailure {
+  readonly id: string
+  readonly failure: FishFailure
+}
+
 /**
  * Render the task page.
  * @param props - the workbench face and localized copy shared by every page.
- * @returns the task list beside the creation form.
+ * @returns computer tasks and workspace, or the plan list beside the plan form.
  */
-/** Fish's own workspace: the one folder both the owner and Fish can see. */
-function WorkspaceFiles({ call, t }: { readonly call: FishPageProps['call']; readonly t: FishPageProps['t'] }): ReactNode {
-  const [entries, setEntries] = useState<readonly Record<string, unknown>[] | null>(null)
-  const [opened, setOpened] = useState<{ name: string; lines: readonly string[] } | null>(null)
-  const [error, setError] = useState('')
-  const list = async (): Promise<void> => {
-    try {
-      const reply = await call('workspace.list', {}) as Record<string, unknown>
-      const items = Array.isArray(reply.entries) ? reply.entries as Record<string, unknown>[] : []
-      setEntries(items.filter(item => item.directory !== true))
-      setError('')
-    } catch (cause) { setError(String(cause instanceof Error ? cause.message : cause)) }
-  }
-  useEffect(() => { void list() }, [])
-  const open = async (name: string): Promise<void> => {
-    try {
-      const reply = await call('workspace.read', { path: name, lines: 80 }) as Record<string, unknown>
-      setOpened({ name, lines: Array.isArray(reply.text) ? reply.text as string[] : [] })
-    } catch (cause) { setError(String(cause instanceof Error ? cause.message : cause)) }
-  }
-  return <section className={css.listColumn} aria-label={t('workspace.title')}>
-    <h2 className={css.sectionTitle}>{t('workspace.title')}</h2>
-    <p className={css.note}>{t('workspace.hint')}</p>
-    <Button size="sm" variant="ghost" onClick={() => { void list() }}>{t('workspace.refresh')}</Button>
-    {error !== '' && <p className={css.inlineError} role="alert">{error}</p>}
-    {entries !== null && entries.length === 0 && <p className={css.muted}>{t('workspace.empty')}</p>}
-    <ul className={css.rows}>
-      {(entries ?? []).map(item => <li key={String(item.name)} className={css.taskRow}>
-        <Button size="sm" variant="ghost" onClick={() => { void open(String(item.name)) }}>{String(item.name)}</Button>
-        <span className={css.rowMeta}>{String(item.bytes ?? '')} B</span>
-      </li>)}
-    </ul>
-    {opened !== null && <div className={css.card}>
-      <h3 className={css.cardTitle}>{opened.name}</h3>
-      <pre className={css.cardBody}>{opened.lines.join('\n')}</pre>
-    </div>}
-  </section>
-}
-
 export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): ReactNode {
   const [category, setCategory] = useState<'computer' | 'scheduled'>('computer')
   const [tasks, setTasks] = useState<readonly FishTask[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [failure, setFailure] = useState<FishFailure | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [rowFailure, setRowFailure] = useState<RowFailure | null>(null)
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
   const [kind, setKind] = useState<TimingKind>('after')
@@ -255,6 +159,7 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
   const [groupId, setGroupId] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [acting, setActing] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [editingTiming, setEditingTiming] = useState('')
@@ -295,8 +200,23 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
     })()
     return () => { live = false }
     // The first read runs once for the page's life; later reads go through Refresh.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const resetForm = (): void => {
+    setEditing(null)
+    setEditingTiming('')
+    setCron('')
+    setTitle('')
+    setPrompt('')
+    setAfterSeconds('')
+    setAtDate('')
+    setAtTime('')
+    setClockTime('')
+    setWeekdays([])
+    setIntervalSeconds('')
+    setGroupId('')
+    setFormError(null)
+  }
 
   const create = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
@@ -317,9 +237,12 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
       setFormError(t('tasks.invalidGroup'))
       return
     }
+    const editingTask = editing === null ? undefined : tasks?.find(task => task.id === editing)
+    const wasPaused = editingTask !== undefined && (editingTask.status === 'paused' || optionalString(editingTask, 'state') === 'paused')
     setFormError(null)
     setCreating(true)
     setNotice(null)
+    setRowFailure(null)
     try {
       const result = await call(editing === null ? 'schedules.create' : 'schedules.update', {
         ...(editing === null ? {} : { id: editing }),
@@ -331,63 +254,78 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
       })
       const failed = failureText(result)
       if (failed !== null) {
-        setFailure(failed)
+        // Keep every input as typed; the real workbench reason sits beside the form.
+        setFormError(failed.message)
         return
       }
-      const accepted = parseOpaque(result.ok ? result.value : undefined)
+      if (!result.ok) return
+      const accepted = parseOpaque(result.value)
       if (!accepted.ok) {
-        setFailure(accepted.failure)
+        setFormError(accepted.failure.message)
         return
       }
-      setEditing(null)
-      setCron('')
-      setTitle('')
-      setPrompt('')
-      setAfterSeconds('')
-      setAtTime('')
-      setClockTime('')
-      setWeekdays([])
-      setIntervalSeconds('')
-      setGroupId('')
+      const saved = isRecord(result.value) ? result.value : {}
+      if (editing === null) {
+        setNotice(t('tasks.created', { title: title.trim() }))
+      } else {
+        const savedState = optionalString(saved, 'state') ?? optionalString(saved, 'status') ?? (wasPaused ? 'paused' : '')
+        setNotice(wasPaused || savedState === 'paused'
+          ? t('tasks.savedPaused', { title: title.trim() })
+          : t('tasks.savedState', { title: title.trim(), state: planStateText(t, savedState) }))
+      }
+      resetForm()
       setFailure(null)
-      setNotice(t('tasks.created', { title: title.trim() }))
       await load()
     } catch (error) {
-      setFailure({ message: reasonOf(error), offline: false })
+      setFormError(reasonOf(error))
     } finally {
       setCreating(false)
     }
   }
 
   const runNow = async (task: FishTask): Promise<void> => {
+    setActing(task.id)
     setNotice(null)
+    setRowFailure(null)
     try {
       const result = await call('schedules.run', { id: task.id })
       const failed = failureText(result)
-      if (failed !== null) { setFailure(failed); return }
-      setFailure(null)
-      setNotice(t('tasks.runNowDone', { title: task.title === '' ? task.id : task.title }))
+      if (failed !== null) {
+        setRowFailure({ id: task.id, failure: failed })
+        return
+      }
+      if (!result.ok) return
+      const value = isRecord(result.value) ? result.value : {}
+      const slot = optionalString(value, 'slot') ?? ''
+      const instanceState = optionalString(value, 'state') ?? ''
+      setNotice(instanceState === 'manual'
+        ? t('tasks.runNowManual', { slot })
+        : t('tasks.runNowQueued', { slot }))
       await load()
     } catch (error) {
-      setFailure({ message: reasonOf(error), offline: false })
+      setRowFailure({ id: task.id, failure: { message: reasonOf(error), offline: false } })
+    } finally {
+      setActing(null)
     }
   }
 
   const remove = async (task: FishTask): Promise<void> => {
     setDeleting(task.id)
     setNotice(null)
+    setRowFailure(null)
     try {
       const result = await call('schedules.delete', { id: task.id })
       const failed = failureText(result)
       if (failed !== null) {
-        setFailure(failed)
+        setRowFailure({ id: task.id, failure: failed })
         return
       }
       setFailure(null)
       setNotice(t('tasks.deleted'))
+      if (editing === task.id) resetForm()
       await load()
     } catch (error) {
-      setFailure({ message: reasonOf(error), offline: false })
+      setRowFailure({ id: task.id, failure: { message: reasonOf(error), offline: false } })
     } finally {
       setDeleting(null)
     }
@@ -419,15 +357,27 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
     setTarget(destination.startsWith('group:') ? 'group' : 'owner')
     setGroupId(destination.startsWith('group:') ? destination.slice(6) : '')
     setFormError(null)
+    setRowFailure(null)
+    setNotice(null)
   }
 
   const pause = async (task: FishTask): Promise<void> => {
+    const state = optionalString(task, 'state') ?? task.status
+    setActing(task.id)
+    setNotice(null)
+    setRowFailure(null)
     try {
-      const result = await call('schedules.update', { id: task.id, state: task.status === 'paused' ? 'active' : 'paused' })
-      if (!result.ok) setFailure(result.failure)
-      else await load()
+      const result = await call('schedules.update', { id: task.id, state: state === 'paused' ? 'active' : 'paused' })
+      if (!result.ok) {
+        setRowFailure({ id: task.id, failure: result.failure })
+        return
+      }
+      setNotice(state === 'paused' ? t('tasks.resumed') : t('tasks.pausedNotice'))
+      await load()
     } catch (error) {
-      setFailure({ message: reasonOf(error), offline: false })
+      setRowFailure({ id: task.id, failure: { message: reasonOf(error), offline: false } })
+    } finally {
+      setActing(null)
     }
   }
 
@@ -442,7 +392,10 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
         <Button size="sm" variant={category === 'computer' ? 'primary' : 'ghost'} onClick={() => { setCategory('computer') }}>{t('delegation.title')}</Button>
         <Button size="sm" variant={category === 'scheduled' ? 'primary' : 'ghost'} onClick={() => { setCategory('scheduled') }}>{t('delegation.scheduled')}</Button>
       </div>
-      {category === 'computer' ? <DelegationTasks call={call} t={t} formatTimestamp={formatTimestamp} /> : (
+      {category === 'computer' ? <div className={css.split}>
+        <DelegationTasks call={call} t={t} formatTimestamp={formatTimestamp} />
+        <WorkspaceFiles call={call} t={t} />
+      </div> : (
         <div className={css.split}>
           <section className={css.listColumn} aria-label={t('tasks.list')}>
             <div className={css.columnHead}>
@@ -463,66 +416,36 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
             {failure !== null && <p className={css.inlineError} role="alert">
               <IconWarningOutlineRegular size={14} />{t('common.failed', { error: failure.message })}
             </p>}
-            <PageHint label={t('common.help')} items={[t('tasks.afterHint'), t('tasks.zoneHint', { zone: TIME_ZONE }), t('tasks.intervalHint'), t('tasks.targetHint')]} />
+            <PageHint label={t('common.help')} items={[
+              t('tasks.planSourceHint'),
+              t('tasks.purposeHint'),
+              t('tasks.runPausedHint'),
+              t('tasks.editPausedHint'),
+              t('tasks.zoneHint', { zone: TIME_ZONE }),
+              t('tasks.afterHint'),
+              t('tasks.intervalHint'),
+              t('tasks.targetHint'),
+            ]} />
             <div className={css.scrollArea} aria-busy={loading}>
               {loading && tasks === null && <p className={css.muted} role="status">{t('tasks.loading')}</p>}
               {tasks !== null && tasks.length === 0 && <p className={css.muted}>{t('tasks.empty')}</p>}
               <ul className={css.rows}>
-                {tasks?.map((task) => {
-                  const due = dueText(task, formatTimestamp)
-                  const when = firstField(task, ['when', 'timing', 'rule'])
-                  const nextRun = optionalString(task, 'nextRunDisplay')
-                  const occurrence = firstField(task, ['occurrence', 'occurrenceState'])
-                  const receipt = optionalString(task, 'receipt_id')
-                  const taskTarget = optionalString(task, 'target')
-                  return (
-                    <li key={task.id} className={css.taskRow}>
-                      <StateDot state={statusDot(task.status)} />
-                      <div className={css.taskBody}>
-                        <span className={css.rowTitle}>{task.title === '' ? task.id : task.title}</span>
-                        {task.prompt !== '' && <p className={css.cardBody}>{task.prompt}</p>}
-                        <span className={css.rowMeta}>{optionalString(task, 'purposeLabel')} · {optionalString(task, 'engineLabel')}</span>
-                        {optionalString(task, 'result') !== undefined && <p className={css.cardBody}>{optionalString(task, 'result')}</p>}
-                        {Array.isArray(task.occurrences) && task.occurrences.length > 0 && <details>
-                          <summary>{t('tasks.history')}</summary>
-                          {task.occurrences.filter(isRecord).map((item, index) => <p key={index} className={css.cardFoot}>{String(item.display ?? item.slot ?? '')} · {String(item.state ?? '')} · {String(item.note ?? '')}</p>)}
-                        </details>}
-                        <span className={css.rowMeta}>
-                          {task.status !== '' && <Tag tone={statusTone(task.status)}>{task.status}</Tag>}
-                          {when !== undefined && <span>{t('tasks.when', { when })}</span>}
-                          {due !== null && <span><IconClockOutlineRegular size={12} /> {t('tasks.nextRun', { time: due })}</span>}
-                          {nextRun !== undefined && <span>{t('tasks.nextRun', { time: nextRun })}</span>}
-                          {taskTarget !== undefined && <span>{t('tasks.target', { target: taskTarget === 'owner' ? t('tasks.targetOwner') : taskTarget })}</span>}
-                        </span>
-                        {(occurrence !== undefined || receipt !== undefined) && (
-                          <span className={css.cardFoot}>
-                            {occurrence !== undefined && t('tasks.occurrence', { state: occurrence })}
-                            {occurrence !== undefined && receipt !== undefined && ' · '}
-                            {receipt !== undefined && t('tasks.receipt', { id: receipt })}
-                          </span>
-                        )}
-                      </div>
-                      <Button size="sm" variant="ghost" onClick={() => { edit(task) }}>{t('tasks.edit')}</Button>
-                      <Button size="sm" variant="outline" onClick={() => { void runNow(task) }}>{t('tasks.runNow')}</Button>
-                      <Button size="sm" variant="ghost" onClick={() => { void pause(task) }}>{task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}</Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={<IconTrashOutlineRegular size={14} />}
-                        aria-label={`${t('tasks.delete')}: ${task.title === '' ? task.id : task.title}`}
-                        title={t('tasks.deleteHint')}
-                        disabled={deleting !== null}
-                        onClick={() => { void remove(task) }}
-                      >
-                        {deleting === task.id ? t('tasks.deleting') : t('tasks.delete')}
-                      </Button>
-                    </li>
-                  )
-                })}
+                {tasks?.map(task => <PlanRow
+                  key={task.id}
+                  call={call}
+                  t={t}
+                  formatTimestamp={formatTimestamp}
+                  task={task}
+                  busy={acting === task.id || deleting === task.id}
+                  failure={rowFailure?.id === task.id ? rowFailure.failure : null}
+                  onEdit={edit}
+                  onRun={(item) => { void runNow(item) }}
+                  onPause={(item) => { void pause(item) }}
+                  onDelete={(item) => { void remove(item) }}
+                />)}
               </ul>
             </div>
           </section>
-          <WorkspaceFiles call={call} t={t} />
           <section className={css.detailColumn} aria-label={t('tasks.create')}>
             <div className={css.detailHead}>
               <h2 className={css.detailTitle}>{editing === null ? t('tasks.create') : t('tasks.edit')}</h2>
@@ -534,6 +457,7 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
                   <option value="reminder">{t('tasks.purpose.reminder')}</option>
                   <option value="autonomy">{t('tasks.purpose.autonomy')}</option>
                 </select>
+                <span className={css.cardFoot}>{purpose === 'reminder' ? t('tasks.purposeHelp.reminder') : t('tasks.purposeHelp.autonomy')}</span>
               </label>
               <label className={css.field}>
                 <span className={css.label}>{t('tasks.title')}</span>
@@ -662,9 +586,11 @@ export function FishTasksPage({ call, t, formatTimestamp }: FishPageProps): Reac
                   />
                 </label>}
               </div>
-              {formError !== null && <p className={css.inlineError} role="alert">{formError}</p>}
+              {formError !== null && <p className={css.inlineError} role="alert">
+                <IconWarningOutlineRegular size={14} />{t('common.failed', { error: formError })}
+              </p>}
               <div className={css.formActions}>
-                {editing !== null && <Button variant="ghost" onClick={() => { setEditing(null); setTitle(''); setPrompt('') }}>{t('tasks.cancelEdit')}</Button>}
+                {editing !== null && <Button variant="ghost" onClick={resetForm}>{t('tasks.cancelEdit')}</Button>}
                 <Button
                   type="submit"
                   variant="primary"

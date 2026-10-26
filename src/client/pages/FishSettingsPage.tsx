@@ -1,9 +1,7 @@
 /**
  * Settings: the operating mode, the pause flag, the daily message budget, the
- * real channel status *with its switches*, and the two switches that matter
- * (pause, computer.work). The old Channels page is merged in here — group
- * participation and the private route are settings, and having them on a second
- * tab meant two places to look for one policy.
+ * real channel status with its switches, pause and computer.work. QQ
+ * participation is owned by the one FishChannelsSettings section here.
  * The owner account holds every capability, so the rest are listed read-only
  * behind one disclosure instead of being offered as thirteen toggles. Each
  * control reports the state its own reply returns, so the panel header and the
@@ -14,10 +12,10 @@ import {
   Button, IconWarningOutlineRegular, Input, SegmentedControl, Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FishFailure, FishResult } from '../contract/slots.ts'
-import type { FishChannelGroup, FishChannelStatus, FishMode, FishSettings } from '../contract/workbench.ts'
-import { parseChannels, parseModeSet, parseSettings } from '../parsers.ts'
+import type { FishMode, FishSettings } from '../contract/workbench.ts'
+import { parseModeSet, parseSettings } from '../parsers.ts'
 import type { FishPageProps } from '../page-props.ts'
-import { GroupStatusFacts } from './GroupStatusFacts.tsx'
+import { FishChannelsSettings } from './FishChannelsSettings.tsx'
 import { PageHint } from './PageHint.tsx'
 import { FaultStatus } from './FaultStatus.tsx'
 import css from './pages.module.css'
@@ -71,12 +69,6 @@ export function FishSettingsPage({ call, t, reportRefresh, formatTimestamp }: Fi
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [workspace, setWorkspace] = useState('')
-  // The real channel state: who she answers as, the private route, and each
-  // whitelisted group's policy. The Channels page used to own this; Settings now
-  // shows it beside the switches that write it, so there is one version of it.
-  const [channel, setChannel] = useState<FishChannelStatus | null>(null)
-  const [channelLoaded, setChannelLoaded] = useState(false)
-  const [channelSaving, setChannelSaving] = useState('')
 
   const applySettings = (next: FishSettings): void => {
     setSettings(next)
@@ -101,14 +93,10 @@ export function FishSettingsPage({ call, t, reportRefresh, formatTimestamp }: Fi
       }
       applySettings(parsed.value)
       setFailure(null)
-      const channelReply = await call('channels.status')
-      const parsedChannel = parseChannels(channelReply.ok ? channelReply.value : undefined)
-      setChannel(parsedChannel.ok ? parsedChannel.value : null)
     } catch (error) {
       setFailure({ message: reasonOf(error), offline: false })
     } finally {
       setLoading(false)
-      setChannelLoaded(true)
     }
   }
 
@@ -211,35 +199,6 @@ export function FishSettingsPage({ call, t, reportRefresh, formatTimestamp }: Fi
       setFailure({ message: reasonOf(error), offline: false })
     } finally {
       setSaving(false)
-    }
-  }
-
-  /**
-   * Write one group switch or its background text through channels.update, then
-   * re-read the same status the switch came from so the row and the policy cannot
-   * disagree. Turning listening off also turns speaking off, exactly as the
-   * backend policy does.
-   */
-  const updateGroup = async (group: FishChannelGroup, field: 'listen' | 'reply' | 'topic', value: boolean | string): Promise<void> => {
-    const key = `${group.id}:${field}`
-    setChannelSaving(key)
-    setFailure(null)
-    try {
-      const params: Record<string, unknown> = { group_id: group.id, [field]: value }
-      if (field === 'listen' && !value) params.reply = false
-      const reply = await call('channels.update', params)
-      const failed = failureText(reply)
-      if (failed !== null) {
-        setFailure(failed)
-        return
-      }
-      const refreshed = await call('channels.status')
-      const parsed = parseChannels(refreshed.ok ? refreshed.value : undefined)
-      if (parsed.ok) setChannel(parsed.value)
-    } catch (error) {
-      setFailure({ message: reasonOf(error), offline: false })
-    } finally {
-      setChannelSaving('')
     }
   }
 
@@ -377,18 +336,13 @@ export function FishSettingsPage({ call, t, reportRefresh, formatTimestamp }: Fi
         <section className={css.settingsCard}>
           <h3 className={css.cardTitle}>{t('settings.sending')}</h3>
           <div className={css.settingsRow}>
-            <span>{t('settings.ownerReply')}</span>
-            <Switch checked={settings.send_policy.owner_private.owner_reply} disabled={busy} label={t('settings.ownerReply')}
+            <span>{t('tools.privateSend')}</span>
+            <Switch checked={settings.send_policy.owner_private.owner_reply} disabled={busy} label={t('tools.privateSend')}
               onChange={(value) => { void saveChanges({ send_policy: { owner_private: { owner_reply: value } } }) }} />
           </div>
           <div className={css.settingsRow}>
-            <span>{t('settings.scheduledResult')}</span>
-            <Switch checked={settings.send_policy.owner_private.scheduled_result} disabled={busy} label={t('settings.scheduledResult')}
-              onChange={(value) => { void saveChanges({ send_policy: { owner_private: { scheduled_result: value } } }) }} />
-          </div>
-          <div className={css.settingsRow}>
-            <span>{t('settings.groupRequest')}</span>
-            <Switch checked={settings.send_policy.group.owner_request} disabled={busy} label={t('settings.groupRequest')}
+            <span>{t('tools.groupSend')}</span>
+            <Switch checked={settings.send_policy.group.owner_request} disabled={busy} label={t('tools.groupSend')}
               onChange={(value) => { void saveChanges({ send_policy: { group: { owner_request: value } } }) }} />
           </div>
         </section>
@@ -476,60 +430,7 @@ export function FishSettingsPage({ call, t, reportRefresh, formatTimestamp }: Fi
           </p>
         </details>
       </section>}
-      {channelLoaded && <section className={css.settingsCard} aria-label={t('settings.channelTitle')}>
-        <h3 className={css.cardTitle}>{t('settings.channelTitle')}</h3>
-        <p className={css.muted}>{t('settings.channelHint')}</p>
-        {channel === null
-          ? <p className={css.muted}>{t('settings.channelLoading')}</p>
-          : <>
-            <dl className={css.facts}>
-              <dt>{t('settings.channelOwner')}</dt>
-              <dd>{channel.owner}</dd>
-              <dt>{t('settings.channelBot')}</dt>
-              <dd>{channel.bot}</dd>
-              <dt>{t('settings.channelRoute')}</dt>
-              <dd>{t('settings.channelRouteValue', { route: channel.private_route })}</dd>
-            </dl>
-            {channel.groups.length === 0
-              ? <p className={css.muted}>{t('settings.channelNoGroups')}</p>
-              : <ul className={css.rows}>
-                {channel.groups.map((group, index) => (
-                  <li key={`${group.id}:${String(index)}`} className={css.taskRow}>
-                    <div className={css.taskBody}>
-                      <span className={css.rowTitle}>{t('settings.channelGroup', { id: group.id })}</span>
-                      <GroupStatusFacts group={group} t={t} />
-                      <Input
-                        key={group.id + group.topic}
-                        defaultValue={group.topic}
-                        aria-label={t('settings.channelTopic')}
-                        placeholder={t('settings.channelTopicPlaceholder')}
-                        disabled={channelSaving !== ''}
-                        onBlur={(event) => {
-                          if (event.target.value !== group.topic) void updateGroup(group, 'topic', event.target.value)
-                        }}
-                      />
-                    </div>
-                    <div className={css.rowActions}>
-                      <Switch
-                        checked={group.listen}
-                        label={t('settings.listen')}
-                        disabled={channelSaving !== ''}
-                        onChange={(value) => { void updateGroup(group, 'listen', value) }}
-                      />
-                      <Switch
-                        checked={group.reply}
-                        label={t('settings.reply')}
-                        disabled={channelSaving !== '' || !group.listen}
-                        onChange={(value) => { void updateGroup(group, 'reply', value) }}
-                      />
-                    </div>
-                  </li>
-                ))}
-              </ul>}
-            <p className={css.hint}>{t('settings.autoReplyHint')}</p>
-            {channel.note !== '' && <p className={css.muted}>{t('settings.channelNote', { note: channel.note })}</p>}
-          </>}
-      </section>}
+      <FishChannelsSettings call={call} t={t} />
     </div>
   )
 }

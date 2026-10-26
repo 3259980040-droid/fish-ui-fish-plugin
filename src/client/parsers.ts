@@ -9,18 +9,31 @@ import {
   type FishDailyLimits, type FishMemory, type FishMessage, type FishMode, type FishModeState, type FishPaths,
   type FishPersona, type FishPersonaApplied, type FishPersonaCandidate, type FishPersonaCurrent,
   type FishPersonaPreview, type FishPersonaPreviewSide, type FishPersonaRecord, type FishSettings,
-  type FishTask, type FishDelegatedTask, type FishDelegationState, type FishChatDeleted,
+  type FishTask, type FishPlanOccurrence, type FishTurnView, type FishTurnDelivery, type FishTurnTimes,
+  type FishWorkspaceListing, type FishWorkspaceFile, type FishWorkspaceWrite,
+  type FishDelegatedTask, type FishDelegationState, type FishChatDeleted,
   type FishDigestRevised, type FishDigestScope, type FishPersonasCleared, type FishPersonaKept,
-  type FishChannelStatus, type FishChannelGroup,
+  type FishChannelStatus, type FishChannelGroup, type FishChannelService,
   type FishActivityItem, type FishActivityPlace, type FishImagePreview,
   type FishAttachment, type FishAttachmentConfig, type FishAttachmentDetail, type FishAttachmentProcessing,
   type FishUploadStarted, type FishUploadProgress,
   type FishConversationKind, type FishTrace, type FishTraceDims,
   type FishCount, type FishDigest, type FishDigestRun, type FishExpression,
   type FishLibraryTotals, type FishOpenEvent, type FishOverview,
-  type FishRetrievalStatus, type FishDocumentSearch, type FishMemoryRevision, type FishDocument,
-  type FishDocumentChunk, type FishDocumentDeleted, type FishDocumentDetail, type FishDocumentHit,
+  type FishRetrievalStatus, type FishMemoryRevision, type FishDocument,
+  type FishMemoryMerged,
+  type FishDocumentChunk, type FishDocumentDeleted, type FishDocumentDetail,
+  type FishDocumentOrganized,
+  type FishCurationDigest, type FishCurationRun, type FishCurationStatus,
+  type FishKnowledgeCatalog, type FishKnowledgeChannelState, type FishKnowledgeMessage,
+  type FishKnowledgeOpened, type FishKnowledgeSearch, type FishKnowledgeOrigin,
   type FishFaultStatus, type FishReminderStatus,
+  type FishPlugin, type FishPluginDiscovery, type FishPluginEvent, type FishPluginKind, type FishPluginSnapshot,
+  type FishPluginTool, type FishSkill, type FishSkillDeleted, type FishSkillEntry, type FishSkillSnapshot,
+  type FishModelConnection, type FishModelDescription, type FishModelGateway, type FishModelProbe,
+  type FishModelRemoved, type FishModelSaved, type FishModelUse,
+  type FishTurns, type FishTurnMaterial, type FishTurnUsage, type FishInstances, type FishInstanceId,
+  type FishInstance, type FishInstancePreset, type FishToolSettings,
 } from './contract/workbench.ts'
 
 /** Wrap a parser so a payload mismatch becomes a rendered failure. */
@@ -32,6 +45,51 @@ function parseReply<T>(action: string, result: unknown, parse: (value: unknown) 
     if (!(error instanceof WorkbenchPayloadError)) throw error
     return { ok: false, failure: { message: `Workbench call ${action}: ${error.message}`, offline: false } }
   }
+}
+
+/** One host-owned identity and its observed lifecycle state. */
+function instanceRecord(value: unknown): FishInstance {
+  const instance = requiredRecord({ value }, 'value', 'instance')
+  return {
+    id: requiredString(instance, 'id', 'instance') as FishInstanceId,
+    name: requiredString(instance, 'name', 'instance'),
+    initial: instance.initial === true,
+    enabled: instance.enabled === true,
+    running: instance.running === true,
+    persona_configured: instance.persona_configured === true,
+    persona_id: requiredString(instance, 'persona_id', 'instance'),
+    persona_name: requiredString(instance, 'persona_name', 'instance'),
+    status_reason: requiredString(instance, 'status_reason', 'instance'),
+  }
+}
+
+/** A settled create, rename or lifecycle mutation returns the host's actual instance. */
+export function parseInstance(result: unknown): FishResult<FishInstance> {
+  return parseReply('instances', result, instanceRecord)
+}
+
+/** Saved persona versions; no contents are substituted from the active window. */
+export function parseInstancePresets(result: unknown): FishResult<readonly FishInstancePreset[]> {
+  return parseReply('instances.presets', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'instances.presets')
+    return requiredArray(record, 'presets', 'instances.presets').map((value) => {
+      const item = requiredRecord({ value }, 'value', 'preset')
+      return { instance_id: requiredString(item, 'instance_id', 'preset') as FishInstanceId,
+        revision: requiredString(item, 'revision', 'preset'), name: requiredString(item, 'name', 'preset'),
+        body: requiredString(item, 'body', 'preset') }
+    })
+  })
+}
+
+/** Host directory, including effective lifecycle state and configured persona. */
+export function parseInstances(result: unknown): FishResult<FishInstances> {
+  return parseReply('instances.list', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'instances.list')
+    const initial = requiredString(record, 'initial_instance_id', 'instances.list') as FishInstanceId
+    const instances = requiredArray(record, 'instances', 'instances.list').map(instanceRecord)
+    if (!instances.some(instance => instance.id === initial)) throw new WorkbenchPayloadError('initial_instance_id')
+    return { initial_instance_id: initial, instances }
+  })
 }
 
 /** `faults.status` is presentation of persisted observations, never a retry command. */
@@ -219,13 +277,17 @@ export function parsePersonaCandidates(result: unknown): FishResult<readonly Fis
     }))
 }
 
-/** `personas.save` reply. */
-export function parsePersonaRecord(result: unknown): FishResult<FishPersonaRecord> {
-  return parseReply('personas.save', result, (value) => {
-    const record = requiredRecord({ value }, 'value', 'personas.save')
+/**
+ * `personas.save` (or `personas.create`) reply: the stored revision.
+ * @param result - the workbench result value.
+ * @param action - the action that returned it, used in a payload failure.
+ */
+export function parsePersonaRecord(result: unknown, action = 'personas.save'): FishResult<FishPersonaRecord> {
+  return parseReply(action, result, (value) => {
+    const record = requiredRecord({ value }, 'value', action)
     return {
-      id: requiredString(record, 'id', 'personas.save'),
-      name: requiredString(record, 'name', 'personas.save'),
+      id: requiredString(record, 'id', action),
+      name: requiredString(record, 'name', action),
       body: optionalString(record, 'body') ?? '',
     }
   })
@@ -278,6 +340,10 @@ function parseMemory(record: Record<string, unknown>): FishMemory {
     source_text: optionalString(record, 'source_text') ?? '',
     kind: optionalString(record, 'kind') ?? '',
     action: optionalString(record, 'action') ?? '',
+    status: optionalString(record, 'status') ?? '',
+    scope: optionalString(record, 'scope') ?? '',
+    confidence: optionalNumber(record, 'confidence') ?? 0,
+    subject: optionalString(record, 'subject') ?? '',
   }
 }
 
@@ -310,6 +376,34 @@ export function parseMemoryRecord(result: unknown): FishResult<FishMemory> {
   })
 }
 
+/** `memory.merge` reply: which record stayed and the dropped one's real new status. */
+export function parseMemoryMerged(result: unknown): FishResult<FishMemoryMerged> {
+  return parseReply('memory.merge', result, (value) => {
+    if (!isRecord(value)) throw new WorkbenchPayloadError('memory.merge')
+    return {
+      keep: requiredString(value, 'keep', 'memory.merge'),
+      drop: requiredString(value, 'drop', 'memory.merge'),
+      drop_status: requiredString(value, 'drop_status', 'memory.merge'),
+    }
+  })
+}
+
+/** One plan instance, narrowed from the `occurrences` array `schedules.list` returns. */
+function parseOccurrences(value: unknown): readonly FishPlanOccurrence[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).map(item => ({
+    slot: optionalString(item, 'slot') ?? '',
+    display: optionalString(item, 'display') ?? optionalString(item, 'slot') ?? '',
+    state: optionalString(item, 'state') ?? '',
+    note: optionalString(item, 'note') ?? '',
+    receipt_id: optionalString(item, 'receipt_id') ?? '',
+    execution: optionalString(item, 'execution') ?? '',
+    attempts: optionalNumber(item, 'attempts') ?? 0,
+    created: optionalNumber(item, 'created') ?? 0,
+    updated: optionalNumber(item, 'updated') ?? 0,
+  }))
+}
+
 /** `schedules.list` reply. */
 export function parseTasks(result: unknown): FishResult<readonly FishTask[]> {
   return parseReply('schedules.list', result, value => requiredArray({ value }, 'value', 'schedules.list')
@@ -323,6 +417,7 @@ export function parseTasks(result: unknown): FishResult<readonly FishTask[]> {
         prompt: optionalString(item, 'prompt') ?? '',
         status: optionalString(item, 'status') ?? '',
         ...(target === undefined ? {} : { target }),
+        occurrences: parseOccurrences(item.occurrences),
       }
     }))
 }
@@ -332,6 +427,181 @@ export function parseOpaque(result: unknown): FishResult<unknown> {
   return { ok: true, value: result }
 }
 
+/** Reported request accounting. Missing values remain unknown. */
+function turnUsage(value: unknown): FishTurnUsage | null {
+  if (!isRecord(value)) return null
+  const coverage = requiredRecord(value, 'coverage', 'usage')
+  const fields = requiredRecord(value, 'field_reports', 'usage')
+  return {
+    scope: requiredString(value, 'scope', 'usage'), state: requiredString(value, 'state', 'usage'),
+    request_count: requiredNumber(value, 'request_count', 'usage'), closed_steps: requiredNumber(value, 'closed_steps', 'usage'),
+    turns: requiredNumber(value, 'turns', 'usage'), usage_reports: requiredNumber(value, 'usage_reports', 'usage'),
+    input_tokens: optionalNumber(value, 'input_tokens') ?? null, output_tokens: optionalNumber(value, 'output_tokens') ?? null,
+    cache_read_tokens: optionalNumber(value, 'cache_read_tokens') ?? null, cache_write_tokens: optionalNumber(value, 'cache_write_tokens') ?? null,
+    uncached_input_tokens: optionalNumber(value, 'uncached_input_tokens') ?? null, cache_hit_ratio: optionalNumber(value, 'cache_hit_ratio') ?? null,
+    coverage: { recorded_requests: requiredNumber(coverage, 'recorded_requests', 'usage.coverage'),
+      linked_requests: requiredNumber(coverage, 'linked_requests', 'usage.coverage'), unlinked_requests: requiredNumber(coverage, 'unlinked_requests', 'usage.coverage') },
+    field_reports: Object.fromEntries(Object.entries(fields).filter((entry): entry is [string, number] => typeof entry[1] === 'number')),
+  }
+}
+
+/** Material original and preview are never conflated. */
+function turnMaterial(value: unknown): FishTurnMaterial {
+  const row = requiredRecord({ value }, 'value', 'material')
+  return { seq: optionalNumber(row, 'seq') ?? 0, reference: requiredString(row, 'reference', 'material'),
+    source: optionalString(row, 'source') ?? '', conversation: optionalString(row, 'conversation') ?? '',
+    message: optionalString(row, 'message') ?? '', place: optionalString(row, 'place') ?? '',
+    received: optionalNumber(row, 'received') ?? null, text: optionalString(row, 'text') ?? '', preview: optionalString(row, 'preview') ?? '',
+    original_state: requiredString(row, 'original_state', 'material'), original: isRecord(row.original) ? row.original : null,
+    payload: isRecord(row.payload) ? row.payload : {}, considered: row.considered === true, cancelled: row.cancelled === true }
+}
+
+/** Stable directory and whole-instance accounting, never a latest-thought substitute. */
+export function parseTurns(result: unknown): FishResult<FishTurns> {
+  return parseReply('turns.list', result, (value) => {
+    const row = requiredRecord({ value }, 'value', 'turns.list')
+    const stats = turnUsage(row.stats)
+    if (stats === null) throw new WorkbenchPayloadError('turns.list.stats')
+    return { instance_id: requiredString(row, 'instance_id', 'turns.list'),
+      runs: requiredArray(row, 'runs', 'turns.list').map((run) => {
+        const parsed = parseTurnView(run)
+        if (!parsed.ok) throw new WorkbenchPayloadError(parsed.failure.message)
+        return parsed.value
+      }), next_cursor: optionalString(row, 'next_cursor') ?? null, stats }
+  })
+}
+
+/** `turn.view` reply: one turn's real status, trigger, delivery, times, and plan instance. */
+export function parseTurnView(result: unknown): FishResult<FishTurnView> {
+  return parseReply('turn.view', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'turn.view')
+    const trigger = isRecord(record.trigger) ? record.trigger : {}
+    const deliveryRaw = isRecord(record.delivery) ? record.delivery : null
+    const receipt = deliveryRaw !== null && isRecord(deliveryRaw.receipt) ? deliveryRaw.receipt : null
+    const delivery: FishTurnDelivery | null = deliveryRaw === null ? null : {
+      state: optionalString(deliveryRaw, 'state') ?? '',
+      sent: deliveryRaw.sent === true,
+      target: optionalString(deliveryRaw, 'target') ?? '',
+      bubbles: optionalNumber(deliveryRaw, 'bubbles') ?? null,
+      receiptId: receipt === null ? '' : (optionalString(receipt, 'id') ?? optionalString(receipt, 'request_id') ?? ''),
+      receiptMessageId: receipt === null ? '' : (optionalString(receipt, 'message_id') ?? ''),
+      error: optionalString(deliveryRaw, 'error') ?? '',
+    }
+    const timesRaw = isRecord(record.delivery_times) ? record.delivery_times : null
+    const deliveryTimes: FishTurnTimes | null = timesRaw === null ? null : {
+      arrival: optionalString(timesRaw, 'arrival') ?? '',
+      started: optionalNumber(timesRaw, 'started') ?? null,
+      first_output: optionalNumber(timesRaw, 'first_output') ?? null,
+      sending: optionalNumber(timesRaw, 'sending') ?? null,
+      receipt: optionalNumber(timesRaw, 'receipt') ?? null,
+      outcome: optionalString(timesRaw, 'outcome') ?? '',
+      error: optionalString(timesRaw, 'error') ?? '',
+    }
+    const trace = isRecord(record.trace) ? record.trace : null
+    const speed = isRecord(record.output_speed) ? record.output_speed : null
+    const planRaw = isRecord(record.plan) ? record.plan : null
+    const scheduleId = planRaw === null ? '' : (optionalString(planRaw, 'schedule_id') ?? '')
+    return {
+      instance_id: optionalString(record, 'instance_id') ?? '',
+      created: optionalNumber(record, 'created') ?? null, started: optionalNumber(record, 'started') ?? null,
+      finished: optionalNumber(record, 'finished') ?? null, merged_into: optionalString(record, 'merged_into') ?? '',
+      materials: Array.isArray(record.materials) ? record.materials.map(turnMaterial) : [],
+      outputs: Array.isArray(record.outputs) ? record.outputs.map((value) => {
+        const output = requiredRecord({ value }, 'value', 'output')
+        return { text: requiredString(output, 'text', 'output'), kind: requiredString(output, 'kind', 'output'),
+          state: requiredString(output, 'state', 'output'), target: optionalString(output, 'target') ?? '',
+          call_id: optionalString(output, 'call_id') ?? '' }
+      }) : [],
+      actions: Array.isArray(record.actions) ? record.actions.map((value) => {
+        const action = requiredRecord({ value }, 'value', 'action')
+        return { call_id: requiredString(action, 'call_id', 'action'), name: requiredString(action, 'name', 'action'),
+          state: requiredString(action, 'state', 'action'), started: optionalNumber(action, 'started') ?? null,
+          finished: optionalNumber(action, 'finished') ?? null }
+      }) : [],
+      trace: trace === null ? null : { state: optionalString(trace, 'state') ?? 'recorded',
+        id: optionalString(trace, 'id') ?? '', reference: optionalString(trace, 'reference') ?? '',
+        phase: optionalString(trace, 'phase') ?? '', has_reasoning: trace.has_reasoning === true,
+        ...(typeof trace.reasoning === 'string' ? { reasoning: trace.reasoning } : {}),
+        error: optionalString(trace, 'error') ?? '',
+        ...(Array.isArray(trace.events) ? { events: trace.events.map((value) => {
+          const event = requiredRecord({ value }, 'value', 'trace.event')
+          return { kind: requiredString(event, 'kind', 'trace.event'), at: optionalNumber(event, 'at') ?? null, value: event.value }
+        }) } : {}) },
+      batches: Array.isArray(record.batches) ? record.batches.filter(isRecord) : [],
+      usage: turnUsage(record.usage),
+      output_speed: speed === null ? null : { tokens_per_second: optionalNumber(speed, 'tokens_per_second') ?? null,
+        reason: optionalString(speed, 'reason') ?? '' },
+      execution: requiredString(record, 'execution', 'turn.view'),
+      status: optionalString(record, 'status') ?? '',
+      raw_status: optionalString(record, 'raw_status') ?? '',
+      error: optionalString(record, 'error') ?? '',
+      trigger: {
+        kind: optionalString(trigger, 'kind') ?? '',
+        reason: optionalString(trigger, 'reason') ?? '',
+        place: optionalString(trigger, 'place') ?? '',
+        source: optionalString(trigger, 'source') ?? '',
+        reference: optionalString(trigger, 'reference') ?? '',
+      },
+      delivery,
+      delivery_times: deliveryTimes,
+      plan: planRaw === null || scheduleId === '' ? null : {
+        schedule_id: scheduleId,
+        slot: optionalString(planRaw, 'slot') ?? '',
+      },
+      silent: record.silent === true,
+      merged: record.merged === true,
+    }
+  })
+}
+
+/** `workspace.list` reply: Fish's own workspace directory listing. */
+export function parseWorkspaceListing(result: unknown): FishResult<FishWorkspaceListing> {
+  return parseReply('workspace.list', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'workspace.list')
+    return {
+      path: optionalString(record, 'path') ?? '',
+      entries: requiredArray(record, 'entries', 'workspace.list').map((item) => {
+        const entry = requiredRecord({ item }, 'item', 'workspace.list.entries')
+        const bytes = optionalNumber(entry, 'bytes')
+        return {
+          name: requiredString(entry, 'name', 'workspace.list.entries'),
+          directory: entry.directory === true,
+          bytes: entry.directory === true ? null : (bytes ?? null),
+        }
+      }),
+    }
+  })
+}
+
+/** `workspace.read` reply: the real file lines the read tool returned. */
+export function parseWorkspaceFile(result: unknown): FishResult<FishWorkspaceFile> {
+  return parseReply('workspace.read', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'workspace.read')
+    return {
+      path: requiredString(record, 'path', 'workspace.read'),
+      lines: requiredNumber(record, 'lines', 'workspace.read'),
+      text: requiredArray(record, 'text', 'workspace.read').map((line) => {
+        if (typeof line !== 'string') throw new WorkbenchPayloadError('workspace.read.text[]')
+        return line
+      }),
+    }
+  })
+}
+
+/** `workspace.write` reply: the fish_file_write tool's real result. */
+export function parseWorkspaceWrite(result: unknown): FishResult<FishWorkspaceWrite> {
+  return parseReply('workspace.write', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'workspace.write')
+    return {
+      ok: record.ok === true,
+      path: optionalString(record, 'path') ?? '',
+      bytes: optionalNumber(record, 'bytes') ?? 0,
+      mtime_ns: optionalNumber(record, 'mtime_ns') ?? 0,
+      error: optionalString(record, 'error') ?? optionalString(record, 'message') ?? '',
+    }
+  })
+}
+
 function requiredNumber(record: Record<string, unknown>, key: string, context: string): number {
   const value = record[key]
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new WorkbenchPayloadError(`${context}.${key}`)
@@ -339,6 +609,9 @@ function requiredNumber(record: Record<string, unknown>, key: string, context: s
 }
 
 function parseDocument(record: Record<string, unknown>): FishDocument {
+  const metadata = isRecord(record.metadata) ? record.metadata : {}
+  const processing = isRecord(metadata.processing) ? metadata.processing : {}
+  const bytes = optionalNumber(record, 'size') ?? optionalNumber(processing, 'original_bytes')
   return {
     doc_id: requiredString(record, 'doc_id', 'library'),
     name: requiredString(record, 'name', 'library'),
@@ -351,6 +624,8 @@ function parseDocument(record: Record<string, unknown>): FishDocument {
     source: optionalString(record, 'source') ?? '',
     url: optionalString(record, 'url') ?? '',
     fetched_at: optionalString(record, 'fetched_at') ?? '',
+    folder: optionalString(record, 'folder') ?? '',
+    ...(bytes === undefined ? {} : { bytes }),
   }
 }
 
@@ -379,7 +654,6 @@ export function parseDocumentRecord(result: unknown): FishResult<FishDocument> {
     return parseDocument(value)
   })
 }
-
 /** `library.detail` reply: one document and the first chunks of its text. */
 export function parseDocumentDetail(result: unknown): FishResult<FishDocumentDetail> {
   return parseReply('library.detail', result, (value) => {
@@ -390,21 +664,6 @@ export function parseDocumentDetail(result: unknown): FishResult<FishDocumentDet
       ...(typeof value.next_ord === 'number' ? { next_ord: value.next_ord } : {}),
     }
   })
-}
-
-/** `library.search` reply: the chunks that answer a question, best first. */
-export function parseDocumentHits(result: unknown): FishResult<readonly FishDocumentHit[]> {
-  return parseReply('library.search', result, value => requiredArray({ value }, 'value', 'library.search')
-    .map((item) => {
-      if (!isRecord(item)) throw new WorkbenchPayloadError('library.search[]')
-      return {
-        doc_id: requiredString(item, 'doc_id', 'library.search'),
-        doc_name: requiredString(item, 'doc_name', 'library.search'),
-        ord: requiredNumber(item, 'ord', 'library.search'),
-        text: requiredString(item, 'text', 'library.search'),
-        score: requiredNumber(item, 'score', 'library.search'),
-      }
-    }))
 }
 
 function retrievalStatus(value: unknown): FishRetrievalStatus {
@@ -426,16 +685,6 @@ export function parseRetrievalStatus(result: unknown): FishResult<FishRetrievalS
   return parseReply('retrieval.status', result, retrievalStatus)
 }
 
-/** Results and the actual retrieval channel from this exact search. */
-export function parseDocumentSearch(result: unknown): FishResult<FishDocumentSearch> {
-  return parseReply('library.search', result, (value) => {
-    if (!isRecord(value)) throw new WorkbenchPayloadError('library.search')
-    const hits = parseDocumentHits(value.results)
-    if (!hits.ok) throw new WorkbenchPayloadError('library.search.results')
-    return { results: hits.value, retrieval: retrievalStatus(value.retrieval) }
-  })
-}
-
 /** `library.delete` reply: the removed version and how many chunks went with it. */
 export function parseDocumentDeleted(result: unknown): FishResult<FishDocumentDeleted> {
   return parseReply('library.delete', result, (value) => {
@@ -444,6 +693,20 @@ export function parseDocumentDeleted(result: unknown): FishResult<FishDocumentDe
       ok: value.ok !== false,
       doc_id: requiredString(value, 'doc_id', 'library.delete'),
       chunks: requiredNumber(value, 'chunks', 'library.delete'),
+      original_retained: value.original_retained === true,
+    }
+  })
+}
+
+/** `library.organize` move reply: the real category and where the original went. */
+export function parseDocumentOrganized(result: unknown): FishResult<FishDocumentOrganized> {
+  return parseReply('library.organize', result, (value) => {
+    if (!isRecord(value)) throw new WorkbenchPayloadError('library.organize')
+    return {
+      ok: value.ok !== false,
+      doc_id: requiredString(value, 'doc_id', 'library.organize'),
+      path: optionalString(value, 'path') ?? '',
+      folder: optionalString(value, 'folder') ?? '',
     }
   })
 }
@@ -761,7 +1024,21 @@ export function parseDelegatedTasks(result: unknown): FishResult<readonly FishDe
 export function parseChannels(result: unknown): FishResult<FishChannelStatus> {
   return parseReply('channels.status', result, (value) => {
     const record = requiredRecord({ value }, 'value', 'channels.status')
+    const connection = requiredString(record, 'connection_id', 'channels.status')
+    if (connection !== '' && connection !== 'qq') throw new WorkbenchPayloadError('channels.status.connection_id')
+    if (record.version !== 1) throw new WorkbenchPayloadError('channels.status.version')
     return {
+      instance_id: requiredString(record, 'instance_id', 'channels.status') as FishInstanceId,
+      version: 1,
+      connection_id: connection,
+      receive: record.receive === true,
+      private_receive: record.private_receive === true,
+      connections: requiredArray(record, 'connections', 'channels.status').map((value) => {
+        const item = requiredRecord({ value }, 'value', 'connection')
+        if (item.id !== 'qq') throw new WorkbenchPayloadError('channels.status.connections.id')
+        return { id: 'qq' as const, name: requiredString(item, 'name', 'connection'),
+          bot: requiredString(item, 'bot', 'connection'), connected: item.connected === true }
+      }),
       owner: requiredString(record, 'owner', 'channels.status'),
       bot: requiredString(record, 'bot', 'channels.status'),
       groups: requiredArray(record, 'groups', 'channels.status').map((item): FishChannelGroup => {
@@ -772,10 +1049,23 @@ export function parseChannels(result: unknown): FishResult<FishChannelStatus> {
           route: optionalString(group, 'route') ?? '',
           engine: optionalString(group, 'engine') ?? '',
           listen: group.listen === true,
+          read: group.read === true,
           reply: group.reply === true,
           learn: group.learn === true,
         }
       }),
+      services: (() => {
+        const raw = record.services
+        if (raw === undefined) return []
+        return requiredArray({ services: raw }, 'services', 'channels.status').map((item): FishChannelService => {
+          const service = requiredRecord({ item }, 'item', 'channels.status.services')
+          return {
+            name: requiredString(service, 'name', 'channels.status.services'),
+            ready: service.ready === true,
+            detail: optionalString(service, 'detail') ?? '',
+          }
+        })
+      })(),
       private_route: requiredString(record, 'private_route', 'channels.status'),
       note: optionalString(record, 'note') ?? '',
     }
@@ -1007,5 +1297,645 @@ export function parseAttachmentDetail(value: unknown): FishResult<FishAttachment
           start: requiredNumber(read, 'start', 'read'), end: requiredNumber(read, 'end', 'read'),
           query: requiredString(read, 'query', 'read'), created: requiredNumber(read, 'created', 'read') }
       }) }
+  })
+}
+
+
+/** Real numbers of a field object; a missing field stays 0 rather than becoming a guess. */
+function numberField(record: Record<string, unknown>, key: string): number {
+  return optionalNumber(record, key) ?? 0
+}
+
+function textField(record: Record<string, unknown>, key: string): string {
+  return optionalString(record, key) ?? ''
+}
+
+/** Display text of an untrusted scalar: strings and numbers, nothing stringified blindly. */
+function scalarText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+function curationCount(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key]
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new WorkbenchPayloadError(`memory.curate.${key}`)
+  }
+  return value
+}
+
+/**
+ * One curation run record. `result` is what the program actually completed;
+ * a missing section stays empty so the page cannot print work that never ran.
+ */
+function parseCurationRunRecord(value: unknown): FishCurationRun {
+  if (!isRecord(value)) throw new WorkbenchPayloadError('memory.curate')
+  const result = isRecord(value.result) ? value.result : {}
+  const progress = (Array.isArray(value.progress) ? value.progress : []).filter(isRecord).map(step => ({
+    name: textField(step, 'name'), state: textField(step, 'state'), error: textField(step, 'error'),
+    completed: curationCount(step, 'completed'), remaining: curationCount(step, 'remaining'),
+    batch_count: curationCount(step, 'batch_count'),
+  }))
+  const learning = [...progress].reverse().find(step => step.name === 'learn' && step.completed !== null)
+  const running = value.status === 'queued' || value.status === 'running'
+  const count = (key: 'completed' | 'remaining' | 'batch_count'): number | null => running
+    ? learning?.[key] ?? curationCount(result, key)
+    : curationCount(result, key) ?? learning?.[key] ?? null
+  const digest = isRecord(result.digest)
+    ? {
+      state: textField(result.digest, 'state'),
+      day: textField(result.digest, 'day'),
+      skipped: result.digest.skipped === true,
+      model_calls: numberField(result.digest, 'model_calls'),
+      chars: numberField(result.digest, 'chars'),
+      error: textField(result.digest, 'error'),
+    } satisfies FishCurationDigest
+    : undefined
+  return {
+    id: requiredString(value, 'id', 'memory.curate'),
+    status: textField(value, 'status'),
+    stage: textField(value, 'stage'),
+    status_label: textField(value, 'status_label'),
+    requested_by: textField(value, 'requested_by'),
+    day: textField(value, 'day'),
+    range_start: numberField(value, 'range_start'),
+    range_end: numberField(value, 'range_end'),
+    created: numberField(value, 'created'),
+    started: numberField(value, 'started'),
+    finished: numberField(value, 'finished'),
+    error: textField(value, 'error'),
+    note: textField(value, 'note'),
+    reused: value.reused === true,
+    progress,
+    result: {
+      completed: count('completed'),
+      remaining: count('remaining'),
+      batch_count: count('batch_count'),
+      new_messages: numberField(result, 'new_messages'),
+      saved_count: numberField(result, 'saved_count'),
+      failure_count: numberField(result, 'failure_count'),
+      model_calls: numberField(result, 'model_calls'),
+      skipped_existing: numberField(result, 'skipped_existing'),
+      truncated: result.truncated === true,
+      note: textField(result, 'note'),
+      failures: (Array.isArray(result.failures) ? result.failures : []).filter(isRecord).map(item => ({
+        stage: textField(item, 'stage'),
+        reason: textField(item, 'reason'),
+      })),
+      ...(digest === undefined ? {} : { digest }),
+    },
+  }
+}
+
+/** `memory.curate.run` reply: the accepted (or already running) run record. */
+export function parseCurationRun(result: unknown): FishResult<FishCurationRun> {
+  return parseReply('memory.curate.run', result, parseCurationRunRecord)
+}
+
+/** `memory.curate.status` reply: the asked run, the recent list, and the shared-record note. */
+export function parseCurationStatus(result: unknown): FishResult<FishCurationStatus> {
+  return parseReply('memory.curate.status', result, (value) => {
+    const row = requiredRecord({ value }, 'value', 'memory.curate.status')
+    return {
+      run: row.run === null || row.run === undefined ? null : parseCurationRunRecord(row.run),
+      latest: row.latest === null || row.latest === undefined ? null : parseCurationRunRecord(row.latest),
+      runs: requiredArray(row, 'runs', 'memory.curate.status').map(parseCurationRunRecord),
+      note: textField(row, 'note'),
+    }
+  })
+}
+
+/** One channel's honesty state; absent numbers stay 0 and absent text stays empty. */
+function parseKnowledgeChannel(value: unknown): FishKnowledgeChannelState {
+  const row = isRecord(value) ? value : {}
+  return {
+    mode: textField(row, 'mode'),
+    used: row.used === true,
+    detail: textField(row, 'detail'),
+    status: textField(row, 'status'),
+    label: textField(row, 'label'),
+    reason: textField(row, 'reason'),
+    indexed: numberField(row, 'indexed'),
+    pending: numberField(row, 'pending'),
+    fts5: row.fts5 === true,
+    ready: row.ready === true,
+    unindexed: numberField(row, 'unindexed'),
+  }
+}
+
+function knowledgeChannels(value: unknown): Readonly<Record<string, FishKnowledgeChannelState>> {
+  if (!isRecord(value)) return {}
+  const channels: Record<string, FishKnowledgeChannelState> = {}
+  for (const [name, state] of Object.entries(value)) channels[name] = parseKnowledgeChannel(state)
+  return channels
+}
+
+/** Source fields read back from the existing document, memory or message record. */
+function knowledgeOrigin(row: Record<string, unknown>): FishKnowledgeOrigin {
+  const metadata = isRecord(row.metadata) ? row.metadata : {}
+  const links = (Array.isArray(row.links) ? row.links : []).filter(isRecord)
+    .map(link => textField(link, 'reference')).filter(reference => reference !== '')
+  const reference = textField(metadata, 'source_reference')
+  return {
+    scope: textField(row, 'scope') || textField(row, 'place'),
+    source: textField(row, 'source') || textField(row, 'store'),
+    sender: textField(row, 'sender') || scalarText(metadata.sender_id ?? metadata.sender),
+    quote: scalarText(row.quote ?? metadata.reply_to),
+    references: Array.from(new Set([...links, ...(reference === '' ? [] : [reference])])),
+    version: numberField(row, 'version'),
+    parent_version: textField(row, 'parent_version'),
+  }
+}
+
+/** `knowledge.search` reply: graded hits plus the retrieval facts of this exact query. */
+export function parseKnowledgeSearch(result: unknown): FishResult<FishKnowledgeSearch> {
+  return parseReply('knowledge.search', result, (value) => {
+    const row = requiredRecord({ value }, 'value', 'knowledge.search')
+    const retrieval = isRecord(row.retrieval) ? row.retrieval : {}
+    const semantic = isRecord(retrieval.semantic) ? retrieval.semantic : {}
+    const counts = isRecord(retrieval.channels) ? retrieval.channels : {}
+    const channelCounts: Record<string, number> = {}
+    for (const [name, count] of Object.entries(counts)) {
+      if (typeof count === 'number' && Number.isFinite(count)) channelCounts[name] = count
+    }
+    const terms = isRecord(retrieval.terms) ? stringValues(retrieval.terms.sample) : []
+    return {
+      query: textField(row, 'query'),
+      hits: requiredArray(row, 'hits', 'knowledge.search').map((item) => {
+        const hit = requiredRecord({ item }, 'item', 'knowledge.search.hit')
+        const levels = isRecord(hit.levels) ? hit.levels : {}
+        const index = isRecord(levels.index) ? levels.index : {}
+        const overview = isRecord(levels.overview) ? levels.overview : {}
+        const original = isRecord(levels.original) ? levels.original : {}
+        const semanticScore = optionalNumber(index, 'semantic')
+        return {
+          reference: requiredString(hit, 'reference', 'knowledge.hit'),
+          kind: textField(hit, 'kind'),
+          level: textField(hit, 'level'),
+          channel: textField(hit, 'channel'),
+          snippet: textField(hit, 'snippet'),
+          time: textField(hit, 'time'),
+          score: optionalNumber(hit, 'score') ?? null,
+          fused: numberField(hit, 'fused'),
+          matched_by: textField(index, 'matched_by'),
+          semantic: semanticScore === undefined ? null : semanticScore,
+          overview_available: overview.available !== false,
+          overview_reason: textField(overview, 'reason'),
+          original_available: original.available !== false,
+          origin: knowledgeOrigin(hit),
+        }
+      }),
+      retrieval: {
+        mode: textField(retrieval, 'mode'),
+        label: textField(retrieval, 'label'),
+        fts5: retrieval.fts5 === true,
+        note: textField(retrieval, 'note'),
+        limit: numberField(retrieval, 'limit'),
+        truncated: retrieval.truncated === true,
+        matched_total: numberField(retrieval, 'matched_total'),
+        terms,
+        channels: channelCounts,
+        semantic: {
+          used: semantic.used === true,
+          status: textField(semantic, 'status'),
+          mode: textField(semantic, 'mode'),
+          label: textField(semantic, 'label'),
+          reason: textField(semantic, 'reason'),
+          query_used_semantic: semantic.query_used_semantic === true,
+          channels: knowledgeChannels(semantic.channels),
+        },
+      },
+    }
+  })
+}
+
+function parseKnowledgeMessage(item: unknown, context: string): FishKnowledgeMessage {
+  const row = requiredRecord({ item }, 'item', context)
+  const attachments = (Array.isArray(row.attachments) ? row.attachments : []).filter(isRecord)
+    .map(part => [textField(part, 'type'), optionalString(part, 'name') ?? textField(part, 'text')]
+      .filter(part => part !== '').join(' · '))
+  return {
+    id: scalarText(row.id),
+    time: textField(row, 'time'),
+    place: textField(row, 'place'),
+    sender: textField(row, 'sender'),
+    direction: textField(row, 'direction'),
+    text: textField(row, 'text'),
+    status: textField(row, 'status'),
+    quote: textField(row, 'quote'),
+    conversation: textField(row, 'conversation'),
+    attachments,
+  }
+}
+
+/**
+ * `knowledge.open` reply: the level the owning store answered. A kind this page
+ * has no renderer for keeps its reference and note rather than being dropped.
+ */
+export function parseKnowledgeOpened(result: unknown): FishResult<FishKnowledgeOpened> {
+  return parseReply('knowledge.open', result, (value) => {
+    const row = requiredRecord({ value }, 'value', 'knowledge.open')
+    const reference = requiredString(row, 'reference', 'knowledge.open')
+    const level = textField(row, 'level')
+    const note = textField(row, 'note')
+    const kind = textField(row, 'kind')
+    if (kind === 'message') {
+      const catalog = isRecord(row.catalog)
+        ? {
+          gist: textField(row.catalog, 'gist'),
+          topics: textField(row.catalog, 'topics'),
+          start_time: textField(row.catalog, 'start_time'),
+          end_time: textField(row.catalog, 'end_time'),
+          from: scalarText(row.catalog.from_message_id),
+          to: scalarText(row.catalog.to_message_id),
+        } satisfies FishKnowledgeCatalog
+        : null
+      const attachments = (Array.isArray(row.attachments) ? row.attachments : []).filter(isRecord)
+        .map(part => [textField(part, 'type'), optionalString(part, 'name') ?? textField(part, 'text')]
+          .filter(part => part !== '').join(' · '))
+      return {
+        kind: 'message',
+        reference,
+        level,
+        note,
+        message: isRecord(row.message) ? parseKnowledgeMessage(row.message, 'knowledge.open.message') : null,
+        catalog,
+        context: (Array.isArray(row.context) ? row.context : [])
+          .map(item => parseKnowledgeMessage(item, 'knowledge.open.context')),
+        attachments,
+      }
+    }
+    if (kind === 'catalog') {
+      const entry = isRecord(row.entry) ? row.entry : {}
+      return {
+        kind: 'catalog',
+        reference,
+        level,
+        note,
+        gist: textField(entry, 'gist'),
+        topics: textField(entry, 'topics'),
+        start_time: textField(entry, 'start_time'),
+        end_time: textField(entry, 'end_time'),
+        messages: (Array.isArray(row.messages) ? row.messages : [])
+          .map(item => parseKnowledgeMessage(item, 'knowledge.open.messages')),
+        page: numberField(row, 'page'),
+        next_page: optionalNumber(row, 'next_page') ?? null,
+      }
+    }
+    if (kind === 'document') {
+      return {
+        kind: 'document',
+        reference,
+        level,
+        note,
+        doc_id: requiredString(row, 'doc_id', 'knowledge.open.document'),
+        doc_name: textField(row, 'doc_name'),
+        version: numberField(row, 'version'),
+        chunks: numberField(row, 'chunks'),
+        chars: numberField(row, 'chars'),
+        url: textField(row, 'url'),
+        original_path: textField(row, 'original_path'),
+        original_exists: row.original_exists === true,
+        origin: knowledgeOrigin(row),
+        chunk: isRecord(row.chunk) ? parseChunk(row.chunk) : null,
+        preview: (Array.isArray(row.preview) ? row.preview : []).map(parseChunk),
+      }
+    }
+    if (kind === 'memory') {
+      return {
+        kind: 'memory',
+        reference,
+        level,
+        note,
+        memory: isRecord(row.memory) ? parseMemory(row.memory) : null,
+        revisions: requiredArray(row, 'revisions', 'knowledge.open.memory').map((item) => {
+          if (!isRecord(item)) throw new WorkbenchPayloadError('knowledge.open.memory.revisions[]')
+          return {
+            revision: requiredNumber(item, 'revision', 'knowledge.open.memory'),
+            text: requiredString(item, 'text', 'knowledge.open.memory'),
+            source_text: optionalString(item, 'source_text') ?? '',
+            evidence: optionalString(item, 'evidence') ?? '',
+            created: requiredNumber(item, 'created', 'knowledge.open.memory'),
+          }
+        }),
+      }
+    }
+    if (kind === 'digest') {
+      return {
+        kind: 'digest',
+        reference,
+        level,
+        note,
+        digest: isRecord(row.digest) ? parseDigest(row.digest) : null,
+      }
+    }
+    return { kind: 'other', reference, level, note }
+  })
+}
+
+/** The six plugin kinds the Fish registry accepts; an unknown kind is a payload failure. */
+function parsePluginKind(value: unknown): FishPluginKind {
+  if (value === 'mcp_stdio' || value === 'mcp_http' || value === 'mcp_sse'
+    || value === 'cli' || value === 'http' || value === 'dsh') return value
+  throw new WorkbenchPayloadError('plugin.kind')
+}
+
+/** One tool row from a discovery reply; only name and description are shown. */
+function parsePluginTool(value: unknown): FishPluginTool {
+  const record = requiredRecord({ value }, 'value', 'plugin.tool')
+  return {
+    name: requiredString(record, 'name', 'plugin.tool'),
+    description: optionalString(record, 'description') ?? '',
+    inputSchema: isRecord(record.inputSchema) ? record.inputSchema : { type: 'object', properties: {} },
+  }
+}
+
+/** One event row; the registry may leave any text field empty. */
+function parsePluginEvent(value: unknown): FishPluginEvent {
+  const record = requiredRecord({ value }, 'value', 'plugin.event')
+  return {
+    ts: requiredNumber(record, 'ts', 'plugin.event'),
+    plugin: optionalString(record, 'plugin') ?? '',
+    role: optionalString(record, 'role') ?? '',
+    action: optionalString(record, 'action') ?? '',
+    ok: record.ok === true,
+    detail: optionalString(record, 'detail') ?? '',
+  }
+}
+
+/** One plugin entry: registry fields with the last real test result, no derived health. */
+function parsePlugin(value: unknown): FishPlugin {
+  const record = requiredRecord({ value }, 'value', 'plugin')
+  const server = isRecord(record.server_info) ? record.server_info : {}
+  const lastTest = optionalNumber(record, 'last_test')
+  const testOk = record.test_ok === true ? true : record.test_ok === false ? false : null
+  const allowed = record.allowed_tools
+  return {
+    id: requiredString(record, 'id', 'plugin'),
+    name: optionalString(record, 'name') ?? requiredString(record, 'id', 'plugin'),
+    kind: parsePluginKind(record.kind),
+    roles: (Array.isArray(record.roles) ? record.roles : []).filter((role): role is string => typeof role === 'string'),
+    enabled: record.enabled === true,
+    owner_only: record.owner_only !== false,
+    timeout: optionalNumber(record, 'timeout') ?? 60,
+    command: optionalString(record, 'command') ?? '',
+    args: (Array.isArray(record.args) ? record.args : []).filter((arg): arg is string => typeof arg === 'string'),
+    url: optionalString(record, 'url') ?? '',
+    allowed_tools: Array.isArray(allowed)
+      ? allowed.filter((tool): tool is string => typeof tool === 'string')
+      : null,
+    last_test: lastTest ?? null,
+    last_error: optionalString(record, 'last_error') ?? '',
+    test_ok: testOk,
+    server_name: optionalString(server, 'name') ?? '',
+    server_version: optionalString(server, 'version') ?? '',
+    package_name: optionalString(record, 'package_name') ?? '',
+    package_version: optionalString(record, 'package_version') ?? '',
+    tools: (Array.isArray(record.tools) ? record.tools : []).map(parsePluginTool),
+    installed_roles: (Array.isArray(record.installed_roles) ? record.installed_roles : [])
+      .filter((role): role is string => typeof role === 'string'),
+  }
+}
+
+/** `plugins.list` reply: registered plugins, recent events, and in-flight calls. */
+export function parsePlugins(result: unknown): FishResult<FishPluginSnapshot> {
+  return parseReply('plugins.list', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'plugins.list')
+    return {
+      plugins: requiredArray(record, 'plugins', 'plugins.list').map(parsePlugin),
+      events: (Array.isArray(record.events) ? record.events : []).map(parsePluginEvent),
+      active: (Array.isArray(record.active) ? record.active : []).filter((item): item is string => typeof item === 'string'),
+    }
+  })
+}
+
+/** `plugins.save` reply: the stored plugin id. */
+export function parsePluginSaved(result: unknown): FishResult<string> {
+  return parseReply('plugins.save', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'plugins.save')
+    return requiredString(record, 'id', 'plugins.save')
+  })
+}
+
+/** `plugins.test` reply: the tools the plugin actually reported. */
+export function parsePluginTest(result: unknown): FishResult<FishPluginDiscovery> {
+  return parseReply('plugins.test', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'plugins.test')
+    return {
+      tools: requiredArray(record, 'tools', 'plugins.test').map(parsePluginTool),
+      native: record.native === true,
+    }
+  })
+}
+
+/** One skill row; a missing enabled flag follows the backend default (enabled). */
+function parseSkill(value: unknown, context: string): FishSkill {
+  const record = requiredRecord({ value }, 'value', context)
+  const updated = record.updated
+  return {
+    name: requiredString(record, 'name', context),
+    description: optionalString(record, 'description') ?? '',
+    enabled: record.enabled !== false,
+    updated: typeof updated === 'number' || typeof updated === 'string' ? updated : null,
+    path: optionalString(record, 'path') ?? '',
+    chars: optionalNumber(record, 'chars') ?? 0,
+  }
+}
+
+/** `skills.list` reply: the real `data/skills` folder and Fish's own note. */
+export function parseSkills(result: unknown): FishResult<FishSkillSnapshot> {
+  return parseReply('skills.list', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'skills.list')
+    return {
+      skills: requiredArray(record, 'skills', 'skills.list').map(item => parseSkill(item, 'skills.list')),
+      note: optionalString(record, 'note') ?? '',
+    }
+  })
+}
+
+/**
+ * `skills.save`, `skills.import`, or `skills.enable` reply: the stored skill.
+ * @param result - the workbench result value.
+ * @param action - the action that returned it, used in a payload failure.
+ */
+export function parseSkillEntry(result: unknown, action: string): FishResult<FishSkillEntry> {
+  return parseReply(action, result, (value) => {
+    const record = requiredRecord({ value }, 'value', action)
+    return {
+      ...parseSkill(record, action),
+      body: optionalString(record, 'body') ?? '',
+      note: optionalString(record, 'note') ?? '',
+    }
+  })
+}
+
+/** `skills.read` reply: the body Fish's `fish_skill_use` would actually load. */
+export function parseSkillRead(result: unknown): FishResult<FishSkillEntry> {
+  return parseReply('skills.read', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'skills.read')
+    return {
+      ...parseSkill(record, 'skills.read'),
+      body: requiredString(record, 'body', 'skills.read'),
+      note: optionalString(record, 'note') ?? '',
+    }
+  })
+}
+
+/** `skills.delete` reply: the removed name. */
+export function parseSkillDeleted(result: unknown): FishResult<FishSkillDeleted> {
+  return parseReply('skills.delete', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'skills.delete')
+    return { name: requiredString(record, 'deleted', 'skills.delete') }
+  })
+}
+
+/** One connection record; credential presence comes only from the backend. */
+function parseModelConnection(value: unknown, context: string): FishModelConnection {
+  const record = requiredRecord({ value }, 'value', context)
+  return {
+    id: optionalString(record, 'id') ?? requiredString(record, 'role', context),
+    role: requiredString(record, 'role', context),
+    name: optionalString(record, 'name') ?? '',
+    base: optionalString(record, 'base') ?? '',
+    model: optionalString(record, 'model') ?? '',
+    key_ref: optionalString(record, 'key_ref') ?? '',
+    has_key: record.has_key === true,
+    key_source: optionalString(record, 'key_source') ?? '',
+    env: optionalString(record, 'env') ?? '',
+  }
+}
+
+/** One use row; an omitted supported flag follows the backend default (supported). */
+function parseModelUse(value: unknown): FishModelUse {
+  const record = requiredRecord({ value }, 'value', 'model.use')
+  return {
+    use: requiredString(record, 'use', 'model.use'),
+    role: optionalString(record, 'role') ?? '',
+    label: optionalString(record, 'label') ?? '',
+    supported: record.supported !== false,
+    ready: record.ready === true,
+    connection: optionalString(record, 'connection') ?? '',
+    model: optionalString(record, 'model') ?? '',
+    reason: optionalString(record, 'reason') ?? '',
+  }
+}
+
+/** `models.current` gateway: fields, or the backend's own read error. */
+function parseModelGateway(value: unknown): FishModelGateway {
+  const record = requiredRecord({ value }, 'value', 'models.current.gateway')
+  return {
+    base: optionalString(record, 'base') ?? '',
+    model: optionalString(record, 'model') ?? '',
+    has_key: record.has_key === true,
+    error: optionalString(record, 'error') ?? '',
+  }
+}
+
+/**
+ * `models.connections` / `models.current` reply: connections, uses, and the
+ * gateway read only when the reply carries one.
+ * @param result - the workbench result value.
+ * @param action - the action that returned it, used in a payload failure.
+ */
+export function parseModels(result: unknown, action: string): FishResult<FishModelDescription> {
+  return parseReply(action, result, (value) => {
+    const record = requiredRecord({ value }, 'value', action)
+    const gateway = record.gateway === undefined ? undefined : parseModelGateway(record.gateway)
+    return {
+      connections: requiredArray(record, 'connections', action).map(item => parseModelConnection(item, action)),
+      uses: requiredArray(record, 'uses', action).map(parseModelUse),
+      source: optionalString(record, 'source') ?? '',
+      note: optionalString(record, 'note') ?? '',
+      ...(gateway === undefined ? {} : { gateway }),
+    }
+  })
+}
+
+/** `models.save` reply: the stored connection and the moment it takes effect. */
+export function parseModelSaved(result: unknown): FishResult<FishModelSaved> {
+  return parseReply('models.save', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'models.save')
+    return {
+      connection: parseModelConnection(record.connection, 'models.save'),
+      effective_at: optionalString(record, 'effective_at') ?? '',
+      applied_uses: (Array.isArray(record.applied_uses) ? record.applied_uses : [])
+        .filter((use): use is string => typeof use === 'string'),
+      note: optionalString(record, 'note') ?? '',
+    }
+  })
+}
+
+/**
+ * `models.test` / `models.discover` reply: one real probe. A failed probe has
+ * a reason and no model list; neither shape is turned into the other.
+ * @param result - the workbench result value.
+ * @param action - the action that returned it, used in a payload failure.
+ */
+export function parseModelProbe(result: unknown, action = 'models.test'): FishResult<FishModelProbe> {
+  return parseReply(action, result, (value) => {
+    const record = requiredRecord({ value }, 'value', action)
+    return {
+      ok: record.ok === true,
+      status: optionalNumber(record, 'status') ?? 0,
+      models: (Array.isArray(record.models) ? record.models : []).filter((model): model is string => typeof model === 'string'),
+      model: optionalString(record, 'model') ?? '',
+      discovery: record.discovery === true,
+      reason: optionalString(record, 'reason') ?? '',
+      note: optionalString(record, 'note') ?? '',
+    }
+  })
+}
+
+/** `models.remove` reply: the credential removal and the uses it affects. */
+export function parseModelRemoved(result: unknown): FishResult<FishModelRemoved> {
+  return parseReply('models.remove', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'models.remove')
+    return {
+      removed: record.removed === true,
+      connection: record.connection === null || record.connection === undefined
+        ? null
+        : parseModelConnection(record.connection, 'models.remove'),
+      affected_uses: (Array.isArray(record.affected_uses) ? record.affected_uses : [])
+        .filter((use): use is string => typeof use === 'string'),
+      ready: record.ready === true,
+      note: optionalString(record, 'note') ?? '',
+    }
+  })
+}
+
+/** Parse the one instance-owned settings value, including actual effective tools. */
+export function parseToolSettings(result: unknown): FishResult<FishToolSettings> {
+  return parseReply('tools.settings', result, (value) => {
+    const record = requiredRecord({ value }, 'value', 'tools.settings')
+    const settings = requiredRecord(record, 'settings', 'tools.settings')
+    const send = requiredRecord(settings, 'send', 'tools.settings')
+    const flags = (source: unknown): Record<string, boolean> => {
+      if (!isRecord(source)) throw new WorkbenchPayloadError('tools.settings.flags')
+      const output: Record<string, boolean> = {}
+      for (const [name, enabled] of Object.entries(source)) {
+        if (typeof enabled !== 'boolean') throw new WorkbenchPayloadError('tools.settings.enabled')
+        output[name] = enabled
+      }
+      return output
+    }
+    if (typeof send.private !== 'boolean' || typeof send.group !== 'boolean') throw new WorkbenchPayloadError('tools.settings.send')
+    return {
+      instance_id: requiredString(record, 'instance_id', 'tools.settings'),
+      settings: { tools: flags(settings.tools), plugins: flags(settings.plugins), send: {
+        private: send.private, group: send.group, groups: flags(send.groups),
+      } },
+      tools: requiredArray(record, 'tools', 'tools.settings').map((item) => {
+        const tool = requiredRecord({ item }, 'item', 'tools.settings.tool')
+        if (typeof tool.enabled !== 'boolean') throw new WorkbenchPayloadError('tools.settings.tool.enabled')
+        return { name: requiredString(tool, 'name', 'tools.settings.tool'), description: optionalString(tool, 'description') ?? '',
+          enabled: tool.enabled, reason: optionalString(tool, 'reason') ?? '' }
+      }),
+      groups: requiredArray(record, 'groups', 'tools.settings').map((group) => {
+        if (typeof group !== 'string') throw new WorkbenchPayloadError('tools.settings.group')
+        return group
+      }),
+    }
   })
 }

@@ -1,10 +1,10 @@
 /**
  * Fish slot contract: the registrant-side props composition for the
  * layout-owned `main` panel and the sidebar-owned `sidebar.panellist` icon.
- * Both entries share one workbench face: the Host proxy calls, the mode state
- * source behind `useMode`, and the pure helpers their components need.
+ * Both entries share one workbench face and pure helpers. Each mounted
+ * instance panel owns its own status response; no mode source is global.
  */
-import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { FishMode, FishModeState } from './workbench.ts'
 
 /** An error the pages render as an actionable status line. */
@@ -21,17 +21,15 @@ export type FishResult<T> =
   | { readonly ok: false; readonly failure: FishFailure }
 
 /**
- * The `main` panel face: the shared mode source and the pages' Host operations.
- * `mode` is declared as an observable and a publish function so the generated
- * `useMode` selector hook and a render-time writer derive from one component.
+ * The `main` panel face: Host operations and browser-local viewing preference.
  */
 export interface FishPanelInjected {
-  /**
-   * Reactive mode state: the header binds it to `useMode`; Chat and Settings
-   * publish the state their original reply returns so every reader agrees.
-   */
-  readonly hooks: { readonly mode: HostObservable<FishModeState | null> }
-  readonly publishMode: (next: FishModeState) => void
+  /** Request a refresh or older page from the registered turn resource. */
+  readonly requestTurns: (instance: string, cursor?: string) => void
+  /** Last viewed instance id; this preference never changes server routing. */
+  readonly readSelectedInstance: () => string | null
+  /** Persist a direct viewing choice in this browser. */
+  readonly saveSelectedInstance: (id: string) => void
   /**
    * Call one workbench action through the Host proxy.
    * @param action - documented workbench action name.

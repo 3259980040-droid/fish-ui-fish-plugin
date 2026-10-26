@@ -9,7 +9,7 @@ import type { FishCall } from './contract/slots.ts'
 /** One page's request to re-read the status line; the notice states its outcome. */
 export type FishPageRefresh = (notice: string | null) => Promise<void>
 
-/** Props shared by the five Fish pages. */
+/** Props shared by every Fish page. */
 export interface FishPageProps {
   /** Call one workbench action through the Host proxy. */
   readonly call: FishCall

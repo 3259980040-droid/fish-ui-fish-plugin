@@ -1,44 +1,41 @@
 /**
- * Library: the owner's own documents, from upload to retrieval.
+ * Library: the owner's own documents, from import to a real trial search.
  *
- * Originals use the same chunk import as chat; pasted notes use the text form.
- * The list shows every stored version with its first chunks and its delete. The
- * ask block runs the same `library.search` her private chat runs before it
- * answers, so the owner can see whether she would actually find the passage.
+ * Pasted notes use the text form; files use the same chunked original import as
+ * chat, so the original stays a file and the index is derived from it. The list
+ * shows what the backend really stored (kind, bytes or chars, version, time and
+ * the category it sits in). Moving a document into a category calls
+ * `library.organize` and shows the returned path. The trial search below runs
+ * the graded `knowledge.search` she uses: index → overview → original chunk and
+ * original file, with the real lexical/semantic state of that query.
  */
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  Button, IconSearchOutlineRegular, IconWarningOutlineRegular, Input, Tag,
+  Button, IconWarningOutlineRegular, Input, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FishFailure } from '../contract/slots.ts'
-import type { FishDocument, FishDocumentDetail, FishDocumentHit, FishRetrievalStatus } from '../contract/workbench.ts'
+import type { FishDocument, FishDocumentDetail, FishRetrievalStatus } from '../contract/workbench.ts'
 import {
-  parseDocumentDeleted, parseDocumentDetail, parseDocumentSearch, parseDocumentRecord, parseDocuments, parseRetrievalStatus,
+  parseDocumentDeleted, parseDocumentDetail, parseDocumentOrganized, parseDocumentRecord, parseDocuments,
+  parseRetrievalStatus,
 } from '../parsers.ts'
 import type { FishPageProps } from '../page-props.ts'
 import { importAttachment, type AttachmentTransferProgress } from '../attachments.ts'
+import { KnowledgeSearch } from './KnowledgeSearch.tsx'
 import { PageHint } from './PageHint.tsx'
 import css from './pages.module.css'
 
-/** How much of a hit the page prints before the owner opens the document. */
-const HIT_LEAD_CHARS = 120
-/** How many hits one ask asks for; the private chat quotes three. */
-const ASK_LIMIT = 10
+/** How many hits one trial search asks for; the backend caps it at 50. */
+const TRIAL_LIMIT = 10
 /** Short text of a thrown value. */
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** The first characters of a chunk, with an ellipsis when it was cut. */
-function lead(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length <= HIT_LEAD_CHARS ? flat : `${flat.slice(0, HIT_LEAD_CHARS)}…`
-}
-
 /**
  * Render the library page.
  * @param props - the workbench face and localized copy shared by every page.
- * @returns the upload block, the stored documents, and the ask block.
+ * @returns the import form, the stored documents with their real actions, and the trial search.
  */
 export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): ReactNode {
   const [name, setName] = useState('')
@@ -48,42 +45,44 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
   const [docs, setDocs] = useState<readonly FishDocument[] | null>(null)
   const [preview, setPreview] = useState<FishDocumentDetail | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
-  const [hits, setHits] = useState<readonly FishDocumentHit[] | null>(null)
-  const [retrieval, setRetrieval] = useState<FishRetrievalStatus | null>(null)
   const [folder, setFolder] = useState('')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
-  const [asking, setAsking] = useState(false)
   const [failure, setFailure] = useState<FishFailure | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [readiness, setReadiness] = useState<FishRetrievalStatus | null>(null)
   const picker = useRef<HTMLInputElement | null>(null)
   const [transferProgress, setTransferProgress] = useState<AttachmentTransferProgress | null>(null)
 
-  const loadDocs = async (): Promise<void> => {
+  /**
+   * Read the stored documents and the index readiness.
+   * @returns the parsed list, or null when the list read failed.
+   */
+  const loadDocs = async (): Promise<readonly FishDocument[] | null> => {
     setLoading(true)
     try {
       const reply = await call('library.list')
       if (!reply.ok) {
         setFailure(reply.failure)
-        return
+        return null
       }
       const parsed = parseDocuments(reply.value)
       if (!parsed.ok) {
         setFailure(parsed.failure)
-        return
+        return null
       }
       setDocs(parsed.value)
       const status = await call('library.status')
-      if (status.ok) {
-        const parsedStatus = parseRetrievalStatus(status.value)
-        if (!parsedStatus.ok) { setFailure(parsedStatus.failure); return }
-        setRetrieval(parsedStatus.value)
-      } else { setFailure(status.failure); return }
+      if (!status.ok) { setFailure(status.failure); return parsed.value }
+      const parsedStatus = parseRetrievalStatus(status.value)
+      if (!parsedStatus.ok) { setFailure(parsedStatus.failure); return parsed.value }
+      setReadiness(parsedStatus.value)
       setFailure(null)
+      return parsed.value
     } catch (error) {
       setFailure({ message: reasonOf(error), offline: false })
+      return null
     } finally {
       setLoading(false)
     }
@@ -115,8 +114,14 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
       if (!result.ok) { setFailure(result.failure); return }
       setFileName(file.name)
       setFailure(null)
-      setNotice(t('attachment.saved', { name: file.name, bytes: result.value.size }))
-      await loadDocs()
+      // The same import registers the document; report the row the list really holds.
+      const rows = await loadDocs()
+      const stored = rows?.find(row => row.name === result.value.name) ?? null
+      setNotice(stored === null
+        ? t('library.importedFileUnlisted', { name: result.value.name })
+        : t('library.importedFile', {
+          name: stored.name, chars: String(stored.chars), chunks: String(stored.chunks), version: String(stored.version),
+        }))
     } catch (error) {
       setFailure({ message: reasonOf(error), offline: false })
     } finally {
@@ -174,6 +179,7 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
         return
       }
       setPreview(parsed.value)
+      setFolder(parsed.value.folder)
       setFailure(null)
     } catch (error) {
       setFailure({ message: reasonOf(error), offline: false })
@@ -197,7 +203,9 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
         return
       }
       setFailure(null)
-      setNotice(t('library.deleted', { name: doc.name }))
+      setNotice(parsed.value.original_retained
+        ? t('library.deletedRetained', { name: doc.name, chunks: String(parsed.value.chunks) })
+        : t('library.deleted', { name: doc.name }))
       if (preview?.doc_id === doc.doc_id) setPreview(null)
       setConfirming(null)
       await loadDocs()
@@ -208,45 +216,38 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
     }
   }
 
-  const ask = async (): Promise<void> => {
-    if (query.trim() === '') return
-    setAsking(true)
-    try {
-      const reply = await call('library.search', { query: query.trim(), limit: ASK_LIMIT })
-      if (!reply.ok) {
-        setFailure(reply.failure)
-        return
-      }
-      const parsed = parseDocumentSearch(reply.value)
-      if (!parsed.ok) {
-        setFailure(parsed.failure)
-        return
-      }
-      setHits(parsed.value.results)
-      setRetrieval(parsed.value.retrieval)
-      setFailure(null)
-    } catch (error) {
-      setFailure({ message: reasonOf(error), offline: false })
-    } finally {
-      setAsking(false)
-    }
-  }
-
-  const openOriginal = async (doc: FishDocument): Promise<void> => {
+  /** Open the original file through the backend's own open action; a refusal is shown verbatim. */
+  const openOriginal = async (doc: { readonly doc_id: string }): Promise<void> => {
+    setBusy(doc.doc_id)
+    setNotice(null)
     try {
       const reply = await call('library.open', { doc_id: doc.doc_id })
-      if (!reply.ok) setFailure(reply.failure)
-      else setNotice(t('library.openedOriginal'))
+      if (!reply.ok) { setFailure(reply.failure); return }
+      setFailure(null)
+      setNotice(t('library.openedOriginal'))
     } catch (error) { setFailure({ message: reasonOf(error), offline: false }) }
+    finally { setBusy(null) }
   }
 
+  /** Move the document into the category the owner typed, then show the returned path. */
   const moveDocument = async (doc: FishDocument): Promise<void> => {
+    if (folder.trim() === '') {
+      setFailure({ message: t('library.organizeNeedName'), offline: false })
+      return
+    }
     setBusy(doc.doc_id)
+    setNotice(null)
     try {
-      const reply = await call('library.organize', { action: 'move', doc_id: doc.doc_id, name: folder })
+      const reply = await call('library.organize', { action: 'move', doc_id: doc.doc_id, name: folder.trim() })
       if (!reply.ok) { setFailure(reply.failure); return }
+      const parsed = parseDocumentOrganized(reply.value)
+      if (!parsed.ok) { setFailure(parsed.failure); return }
+      setFailure(null)
+      setNotice(t('library.organizeResult', {
+        folder: parsed.value.folder === '' ? t('library.folderRoot') : parsed.value.folder,
+        path: parsed.value.path,
+      }))
       await loadDocs()
-      setNotice(t('library.organized'))
       setPreview(null)
     } catch (error) { setFailure({ message: reasonOf(error), offline: false }) }
     finally { setBusy(null) }
@@ -256,18 +257,22 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
     <div className={css.page}>
       <h2 className={css.sectionTitle}>{t('library.title')}</h2>
       <p className={css.hint}>{t('library.intro')}</p>
-      <PageHint label={t('common.help')} items={[t('library.scope'), t('library.askHint')]} />
+      <PageHint label={t('common.help')} items={[t('library.scope'), t('library.importNote'), t('library.trialNote')]} />
       {failure !== null && <p className={css.inlineError} role="alert">
-        <IconWarningOutlineRegular size={14} />{failure.message}
+        <IconWarningOutlineRegular size={14} />{t('common.failed', { error: failure.message })}
       </p>}
-      {retrieval !== null && <section className={css.card} role="status">
-        <Tag tone={retrieval.mode === 'hybrid' || retrieval.last_mode === 'hybrid' ? 'success' : 'quiet'}>
-          {t(retrieval.mode === 'hybrid' || retrieval.last_mode === 'hybrid' ? 'retrieval.hybrid' : 'retrieval.lexical')}
-        </Tag>
-        <p className={css.hint}>{retrieval.detail || retrieval.last_detail || t(retrieval.ready ? 'retrieval.ready' : 'retrieval.notReady')}</p>
-        <p className={css.hint}>{t('retrieval.pending', { count: retrieval.pending })}</p>
-      </section>}
       {notice !== null && <p className={css.inlineNotice} role="status" aria-live="polite">{notice}</p>}
+      {readiness !== null && <section className={css.card} role="status">
+        <div className={css.cardHead}>
+          <span className={css.cardTitle}>{t('library.readinessTitle')}</span>
+          <Tag tone={readiness.ready ? 'success' : 'quiet'}>
+            {t(readiness.ready ? 'library.readinessReady' : 'library.readinessLexical')}
+          </Tag>
+        </div>
+        <p className={css.hint}>{readiness.detail || t(readiness.ready ? 'retrieval.ready' : 'retrieval.notReady')}</p>
+        <p className={css.hint}>{t('retrieval.pending', { count: readiness.pending })}</p>
+        <p className={css.hint}>{t('library.readinessNote')}</p>
+      </section>}
 
       <section className={css.section} aria-label={t('library.upload')}>
         <h3 className={css.cardTitle}>{t('library.upload')}</h3>
@@ -281,7 +286,7 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
             />
           </label>
           <div className={css.field}>
-            <span className={css.label}>{t('library.text')}</span>
+            <span className={css.label}>{t('library.file')}</span>
             <input
               type="file"
               hidden
@@ -291,7 +296,7 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
             />
             <div className={css.searchRow}>
               <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => { picker.current?.click() }}>
-                {t('library.file')}
+                {t('library.filePick')}
               </Button>
               <span className={css.muted}>{fileName === '' ? t('library.fileHint') : fileName}</span>
               {transferProgress !== null && <span className={css.hint} role="status">{t(transferProgress.finalizing ? 'attachment.finalizing' : 'attachment.uploadProgress', { name: transferProgress.name, received: transferProgress.received, total: transferProgress.size })}</span>}
@@ -333,9 +338,13 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
             <li key={doc.doc_id} className={css.row}>
               <span className={css.rowTitle}>{doc.name}</span>
               <span className={css.cardMeta}>
-                <span>{t('library.version', { version: String(doc.version) })}</span>
-                <span>{t('library.chars', { chars: String(doc.chars) })}</span>
+                <Tag tone="outline">{doc.kind}</Tag>
+                <span>{doc.bytes === undefined
+                  ? t('library.chars', { chars: String(doc.chars) })
+                  : t('library.bytes', { bytes: String(doc.bytes) })}</span>
                 <span>{t('library.chunks', { chunks: String(doc.chunks) })}</span>
+                <span>{t('library.version', { version: String(doc.version) })}</span>
+                <span>{t('library.folderLine', { folder: doc.folder === '' ? t('library.folderRoot') : doc.folder })}</span>
                 <span>{formatTimestamp(doc.created)}</span>
               </span>
               <span className={css.rowActions}>
@@ -353,6 +362,9 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
                     <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => { void view(doc) }}>
                       {preview?.doc_id === doc.doc_id ? t('library.hide') : t('library.view')}
                     </Button>
+                    <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => { void openOriginal(doc) }}>
+                      {t('library.openOriginal')}
+                    </Button>
                     <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => { setConfirming(doc.doc_id) }}>
                       {t('library.delete')}
                     </Button>
@@ -361,60 +373,47 @@ export function FishLibraryPage({ call, t, formatTimestamp }: FishPageProps): Re
             </li>
           ))}
         </ul>
-        {preview !== null && <section className={css.section} aria-label={t('library.previewTitle', { count: String(preview.preview.length) })}>
+        {preview !== null && <section className={css.section} aria-label={t('library.detailTitle', { name: preview.name })}>
           <h4 className={css.cardTitle}>
-            {preview.name} · {t('library.previewTitle', { count: String(preview.preview.length) })}
+            {t('library.detailTitle', { name: preview.name })} · {t('library.version', { version: String(preview.version) })}
           </h4>
-          <p className={css.hint}>{preview.original_path || t('library.originalMissing')}</p>
+          <p className={css.hint}>{t('library.detailMeta', {
+            kind: preview.kind,
+            chars: String(preview.chars),
+            chunks: String(preview.chunks),
+            folder: preview.folder === '' ? t('library.folderRoot') : preview.folder,
+          })}</p>
+          <p className={css.hint}>{preview.original_path === '' || preview.original_path === undefined
+            ? t('library.originalUnavailable')
+            : t('library.originalAvailable', { path: preview.original_path })}</p>
           {preview.url !== undefined && preview.url !== '' && <p className={css.hint}>{preview.url}</p>}
           {preview.fetched_at !== undefined && preview.fetched_at !== '' && <p className={css.hint}>{t('library.fetchedAt', { time: preview.fetched_at })}</p>}
-          <div className={css.formActions}>
-            <Button size="sm" disabled={!preview.original_path} onClick={() => { void openOriginal(preview) }}>{t('library.openOriginal')}</Button>
+          <div className={css.searchRow}>
             <Input value={folder} aria-label={t('library.folder')} placeholder={t('library.folder')} onChange={(event) => { setFolder(event.target.value) }} />
             <Button size="sm" disabled={busy !== null} onClick={() => { void moveDocument(preview) }}>{t('library.organize')}</Button>
+            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => { void openOriginal(preview) }}>{t('library.openOriginal')}</Button>
           </div>
-          {preview.preview.map(chunk => (
-            <section key={chunk.ord} className={css.card}>
-              <div className={css.cardHead}>
-                <span className={css.cardTitle}>{t('library.chunkHead', { ord: String(chunk.ord) })}</span>
-                <span className={css.muted}>{t('library.chars', { chars: String(chunk.chars) })}</span>
-              </div>
-              <p className={css.cardBody}>{chunk.text}</p>
-            </section>
-          ))}
+          {preview.preview.length === 0
+            ? <p className={css.muted}>{t('library.noChunks')}</p>
+            : <>
+              <p className={css.cardTitle}>{t('library.detailChunks', { count: String(preview.preview.length) })}</p>
+              {preview.preview.map(chunk => (
+                <section key={chunk.ord} className={css.card}>
+                  <div className={css.cardHead}>
+                    <span className={css.cardTitle}>{t('library.chunkHead', { ord: String(chunk.ord) })}</span>
+                    <span className={css.muted}>{t('library.chars', { chars: String(chunk.chars) })}</span>
+                  </div>
+                  <p className={css.cardBody}>{chunk.text}</p>
+                </section>
+              ))}
+            </>}
+          <p className={css.hint}>{t('library.detailNote')}</p>
         </section>}
       </section>
 
-      <section className={css.section} aria-label={t('library.ask')}>
-        <h3 className={css.cardTitle}>{t('library.ask')}</h3>
-        <form className={css.searchRow} role="search" onSubmit={(event) => { event.preventDefault(); void ask() }}>
-          <Input
-            type="search"
-            icon={<IconSearchOutlineRegular />}
-            aria-label={t('library.ask')}
-            placeholder={t('library.askPlaceholder')}
-            value={query}
-            onChange={(event) => { setQuery(event.target.value) }}
-            className={css.grow ?? ''}
-          />
-          <Button type="submit" size="sm" variant="outline" disabled={asking || query.trim() === ''}>
-            {asking ? t('library.asking') : t('library.askAction')}
-          </Button>
-        </form>
-        {hits !== null && hits.length === 0 && <p className={css.muted}>{t('library.noHits')}</p>}
-        {hits !== null && hits.length > 0 && <p className={css.muted}>{t('library.hits', { count: String(hits.length) })}</p>}
-        {hits?.map(hit => (
-          <section key={hit.doc_id + ':' + String(hit.ord)} className={css.card}>
-            <div className={css.cardHead}>
-              <span className={css.cardTitle}>{hit.doc_name}</span>
-              <Tag tone="outline">{t('library.chunkHead', { ord: String(hit.ord) })}</Tag>
-            </div>
-            <p className={css.cardBody}>{lead(hit.text)}</p>
-            <footer className={css.cardMeta}>
-              <span>{t('library.hitScore', { score: hit.score.toFixed(1) })}</span>
-            </footer>
-          </section>
-        ))}
+      <section className={css.section} aria-label={t('knowledge.title')}>
+        <h3 className={css.cardTitle}>{t('library.trialTitle')}</h3>
+        <KnowledgeSearch call={call} t={t} formatTimestamp={formatTimestamp} limit={TRIAL_LIMIT} channels={['documents']} />
       </section>
     </div>
   )

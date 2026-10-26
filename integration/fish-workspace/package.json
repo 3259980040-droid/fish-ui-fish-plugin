@@ -1,0 +1,14 @@
+{
+  "name": "fish-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-client-ui-fish": "link:E:/Program Files/DSH/source/dsh/packages/client/ui-fish"
+  }
+}

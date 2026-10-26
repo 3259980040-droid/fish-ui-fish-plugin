@@ -72,6 +72,7 @@ export function DelegationTasks({ call, t, formatTimestamp }: Props): ReactNode 
   }, [call, hasActive])
 
   const cancel = async (task: FishDelegatedTask): Promise<void> => {
+    setError(null)
     const reply = await call('delegations.cancel', { id: task.id })
     if (!reply.ok) setError(reply.failure.message)
     await load()
@@ -124,35 +125,37 @@ export function DelegationTasks({ call, t, formatTimestamp }: Props): ReactNode 
     </div>
     <PageHint label={t('common.help')} items={[t('delegation.hint')]} />
     {error !== null && <p className={css.inlineError} role="alert">{error}</p>}
-    {tasks.length === 0 && <p className={css.muted}>{t('delegation.empty')}</p>}
-    <ul className={css.rows}>
-      {tasks.map(task => <li key={task.id} className={css.taskRow}>
-        <div className={css.taskBody}>
-          <span className={css.rowTitle}>{task.title}</span>
-          <span className={css.rowMeta}>
-            <Tag tone={toneOf(task)}>{t(`delegation.state.${task.status}`)}</Tag>
-            <span>{t(`delegation.files.${task.artifact_status}`)}</span>
-            {!active(task) && task.finished !== undefined &&
-              <span>{t('delegation.finished', { time: formatTimestamp(task.finished) })}</span>}
-          </span>
-          {task.error !== '' && <p className={css.inlineError}>{task.error}</p>}
-          {task.result !== '' && <details><summary>{t('delegation.result')}</summary><p>{task.result}</p></details>}
-          {task.workspace !== '' && <code>{task.workspace}</code>}
-          {task.artifacts.length > 0 && <span className={css.cardFoot}>
-            {task.artifacts.map(file => <span key={file.id}>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void download(task, file.id, true) }}>
-                {t('delegation.open', { name: file.name })}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void download(task, file.id) }}>
-                {t('delegation.download', { name: file.name })}
-              </Button>
-            </span>)}
-          </span>}
+    <div className={css.scrollArea} aria-busy={busy}>
+      {tasks.length === 0 && <p className={css.muted}>{t('delegation.empty')}</p>}
+      <ul className={css.rows}>
+        {tasks.map(task => <li key={task.id} className={css.taskRow}>
+          <div className={css.taskBody}>
+            <span className={css.rowTitle}>{task.title}</span>
+            <span className={css.rowMeta}>
+              <Tag tone={toneOf(task)}>{t(`delegation.state.${task.status}`)}</Tag>
+              <span>{t(`delegation.files.${task.artifact_status}`)}</span>
+              {!active(task) && task.finished !== undefined &&
+                <span>{t('delegation.finished', { time: formatTimestamp(task.finished) })}</span>}
+            </span>
+            {task.error !== '' && <p className={css.inlineError}>{task.error}</p>}
+            {task.result !== '' && <details><summary>{t('delegation.result')}</summary><p className={css.cardBody}>{task.result}</p></details>}
+            {task.workspace !== '' && <code>{task.workspace}</code>}
+            {task.artifacts.length > 0 && <span className={css.cardFoot}>
+              {task.artifacts.map(file => <span key={file.id}>
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void download(task, file.id, true) }}>
+                  {t('delegation.open', { name: file.name })}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void download(task, file.id) }}>
+                  {t('delegation.download', { name: file.name })}
+                </Button>
+              </span>)}
+            </span>}
 
-          {active(task) && <Button size="sm" variant="ghost" disabled={task.status === 'cancel_requested'}
-            onClick={() => { void cancel(task) }}>{t('delegation.cancel')}</Button>}
-        </div>
-      </li>)}
-    </ul>
+            {active(task) && <Button size="sm" variant="ghost" disabled={task.status === 'cancel_requested'}
+              onClick={() => { void cancel(task) }}>{t('delegation.cancel')}</Button>}
+          </div>
+        </li>)}
+      </ul>
+    </div>
   </section>
 }

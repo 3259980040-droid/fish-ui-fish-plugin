@@ -1,15 +1,19 @@
 /**
- * Browser caller for the Host's `/fish/workbench` proxy. The route is
- * same-origin and authenticated by the DSH connection cookie; the Fish control
- * token stays on the Host. This module owns the wire narrowing: a transport or
- * envelope failure becomes a `FishFailure`, and a reply `ok: false` carries the
- * workbench's own error text.
+ * Workbench envelope narrowing shared by the native Remote and the original
+ * Fetch adapter. The live Fish client uses createNativeWorkbench over desktop
+ * IPC/web Remote; backend credentials remain on the Host.
  */
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { FishCall, FishFailure, FishResult } from './contract/slots.ts'
-import { isRecord, type WorkbenchCall, type WorkbenchReply } from './contract/workbench.ts'
+import { isRecord, type FishInstanceId, type WorkbenchCall, type WorkbenchReply } from './contract/workbench.ts'
 
 /** Route the Host half registers (relative to the document). */
 export const WORKBENCH_ROUTE = 'fish/workbench'
+
+/** Bind all page operations to their own instance, including asynchronous follow-up reads. */
+export function createInstanceWorkbench(call: FishCall, instanceId: FishInstanceId): FishCall {
+  return (action, params = {}) => call(action, { ...params, instance_id: instanceId })
+}
 
 /** Longest error text rendered in a status line. */
 const MAX_REASON_LENGTH = 400
@@ -74,6 +78,26 @@ export function createWorkbench(doFetch: (input: string, init: RequestInit) => P
       const failure: FishFailure = { message: reply.error, offline: isOfflineMessage(reply.error) }
       return { ok: false, failure }
     }
+    return { ok: true, value: reply.result }
+  }
+}
+
+/** Native transport: reuse the workbench envelope over the Host Remote/desktop IPC. */
+export function createNativeWorkbench(invoke: (request: string) => Promise<RemoteResult<string>>): FishCall {
+  return async (action, params = {}) => {
+    let body: unknown
+    try {
+      const answer = await invoke(JSON.stringify({ action, params }))
+      if (!answer.ok) return { ok: false, failure: { message: answer.error.message, offline: false } }
+      body = JSON.parse(answer.value)
+    }
+    catch (error) {
+      const message = `Fish is offline: the DSH host did not answer (${reasonOf(error)})`
+      return { ok: false, failure: { message, offline: true } }
+    }
+    const reply = parseReply(body)
+    if (reply === null) return { ok: false, failure: { message: 'Fish workbench returned an unexpected reply', offline: false } }
+    if (!reply.ok) return { ok: false, failure: { message: reply.error, offline: isOfflineMessage(reply.error) } }
     return { ok: true, value: reply.result }
   }
 }

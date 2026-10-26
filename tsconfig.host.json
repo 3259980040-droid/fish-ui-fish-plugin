@@ -16,7 +16,7 @@
       "path": "../../../vendor/schemastery"
     },
     {
-      "path": "../../host/webserver"
+      "path": "../../typert/protocol"
     }
   ]
 }

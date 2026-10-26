@@ -1,0 +1,275 @@
+/* Two continuous reading surfaces;
+  composer and statistics remain outside their scroll areas. */
+.workbench {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.readers {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.left {
+  display: flex;
+  flex: 1 1 60%;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.right {
+  display: flex;
+  flex: 1 1 40%;
+  flex-direction: column;
+  min-width: 240px;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+}
+.readerHead {
+  display: flex;
+  flex: none;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+}
+.readerHead h2 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.timelineLayout {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.timeline, .reasoningScroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px 20px 24px;
+  scrollbar-gutter: stable;
+  user-select: text;
+}
+.reasoningScroll {
+  padding: 12px 20px 24px;
+}
+.locator {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 24px;
+  overflow: auto;
+  padding-top: 12px;
+}
+.locator button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.locator span {
+  width: 12px;
+  height: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  border-radius: var(--dsw-radius-sm);
+}
+.locator button[aria-current='true'] span, .locator button:hover span {
+  height: 4px;
+  background: var(--dsw-alias-label-primary);
+}
+.turn {
+  padding: 16px 0 20px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l4);
+  scroll-margin: 16px;
+}
+.turnHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.turnSelect {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.turnSelect:hover, .turn[data-selected='true'] .turnSelect {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.material {
+  margin: 0 0 20px;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 4px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.text, .reasoning {
+  margin: 8px 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.reasoning {
+  color: var(--dsw-alias-label-secondary);
+}
+.quote {
+  margin: 10px 0;
+  padding: 0 12px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.original, .event {
+  margin: 12px 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+.original summary, .event summary {
+  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+.original pre, .event pre {
+  margin: 10px 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 12px 0;
+}
+.output {
+  padding: 12px 0 8px;
+}
+.detailHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.detailHeading p {
+  margin: 0 0 8px;
+}
+.subheading {
+  margin: 20px 0 12px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+}
+.empty {
+  margin: 24px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 22px;
+}
+.error {
+  margin: 8px 16px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.times {
+  margin: 12px 0;
+}
+.times > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.times dt, .times dd {
+  margin: 0;
+}
+.composerDock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l4);
+  overflow: visible;
+}
+.stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 4px 8px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l4);
+}
+@media (max-width: 760px) {
+  .right {
+    flex-basis: 45%;
+    min-width: 180px;
+  }
+  .timeline,.reasoningScroll {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .readerHead {
+    padding: 8px 12px;
+  }
+}

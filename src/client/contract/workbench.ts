@@ -6,6 +6,37 @@
  * rather than from a generated schema, so the client narrows every reply at
  * this wire edge before any page reads it.
  */
+import type { Branded } from '@deepseek-ai/dsh-brand'
+
+/** Stable identity of one Fish instance; unrelated to a desktop conversation id. */
+export type FishInstanceId = Branded<'FishInstanceId'>
+
+/** One running or stopped Fish instance reported by the host directory. */
+export interface FishInstance {
+  readonly id: FishInstanceId
+  readonly name: string
+  readonly initial: boolean
+  readonly enabled: boolean
+  readonly running: boolean
+  readonly persona_configured: boolean
+  readonly persona_id: string
+  readonly persona_name: string
+  readonly status_reason: string
+}
+
+/** One explicitly selected saved persona version available during instance creation. */
+export interface FishInstancePreset {
+  readonly instance_id: FishInstanceId
+  readonly revision: string
+  readonly name: string
+  readonly body: string
+}
+
+/** `instances.list` reply; the initial identity comes from the host, not the browser. */
+export interface FishInstances {
+  readonly initial_instance_id: FishInstanceId
+  readonly instances: readonly FishInstance[]
+}
 
 /** One workbench call: an action name and its parameters. */
 export interface WorkbenchCall {
@@ -198,6 +229,7 @@ export interface FishMemoryRevision {
 
 export interface FishMemory {
   readonly evidence_label: string
+  /** Backend display label; empty for statuses it does not translate (merged, disabled). */
   readonly status_label: string
   readonly source_text: string
   readonly id: string
@@ -209,6 +241,25 @@ export interface FishMemory {
   readonly kind: string
   /** Progress of an event-kind memory: 'open' means it can still be marked done. */
   readonly action: string
+  /** Raw lifecycle (active, candidate, archived, disabled, merged); never guessed from labels. */
+  readonly status: string
+  /**
+   * Provenance of the row, not an isolation identity: `owner` is the owner's
+   * private chat/client, `chat:group:<id>` is that group's thread.
+   */
+  readonly scope: string
+  /** Stored confidence; 0 when the backend omitted it. */
+  readonly confidence: number
+  /** Who the fact is about (QQ account or named fiction person); empty when unset. */
+  readonly subject: string
+}
+
+/** `memory.merge` reply: which record stayed, which was marked, and its real new status. */
+export interface FishMemoryMerged {
+  readonly keep: string
+  readonly drop: string
+  /** Raw status the dropped record now carries (merged). */
+  readonly drop_status: string
 }
 
 /** One library total: a label and how many records carry it. */
@@ -301,6 +352,284 @@ export interface FishOverview {
   readonly expressions: readonly FishExpression[]
 }
 
+/** One step the curation program actually recorded, in execution order. */
+export interface FishCurationStep {
+  readonly name: string
+  /** accepted / running / done / failed. */
+  readonly state: string
+  /** Real failure text of this step; empty when it succeeded. */
+  readonly error: string
+  /** Persisted batch counts; null on steps and historical records without them. */
+  readonly completed: number | null
+  readonly remaining: number | null
+  readonly batch_count: number | null
+}
+
+/** One failed source inside the learning step. */
+export interface FishCurationFailure {
+  readonly stage: string
+  readonly reason: string
+}
+
+/** The digest step's own outcome; absent when the run skipped the digest step. */
+export interface FishCurationDigest {
+  readonly state: string
+  readonly day: string
+  readonly skipped: boolean
+  readonly model_calls: number
+  readonly chars: number
+  readonly error: string
+}
+
+/**
+ * What the run really completed: counts and failures are separate, and a failed
+ * step never turns into a saved count. Only the fields the backend wrote are set.
+ */
+export interface FishCurationResult {
+  /** Actual completed units, unprocessed units and batches; absent history stays null. */
+  readonly completed: number | null
+  readonly remaining: number | null
+  readonly batch_count: number | null
+  readonly new_messages: number
+  readonly saved_count: number
+  readonly failure_count: number
+  readonly model_calls: number
+  readonly skipped_existing: number
+  readonly truncated: boolean
+  readonly note: string
+  readonly failures: readonly FishCurationFailure[]
+  readonly digest?: FishCurationDigest
+}
+
+/**
+ * One curation run record. The daily window, the Fish tool and this page's
+ * button all submit to the same program and read the same record back.
+ */
+export interface FishCurationRun {
+  /** Stable run reference (`curate:…`); `memory.curate.status` takes it back. */
+  readonly id: string
+  /** queued / running / done / partial / failed. */
+  readonly status: string
+  readonly stage: string
+  /** Backend label of `status` (已受理 / 整理中 / 已完成 / 部分完成 / 失败). */
+  readonly status_label: string
+  /** Who asked: daily, tool, or client. */
+  readonly requested_by: string
+  readonly day: string
+  /** Epoch seconds the processed range starts and ends at. */
+  readonly range_start: number
+  readonly range_end: number
+  readonly created: number
+  readonly started: number
+  readonly finished: number
+  /** Real failure text of a failed/partial run; empty otherwise. */
+  readonly error: string
+  /** Why the record looks like it does (queued wording, reuse note); empty when absent. */
+  readonly note: string
+  /** True when the existing fixed run is running or resumed from its unfinished sources. */
+  readonly reused: boolean
+  readonly progress: readonly FishCurationStep[]
+  readonly result: FishCurationResult
+}
+
+/** `memory.curate.status` reply: one run (when asked by id) or the recent list. */
+export interface FishCurationStatus {
+  readonly run: FishCurationRun | null
+  readonly latest: FishCurationRun | null
+  readonly runs: readonly FishCurationRun[]
+  readonly note: string
+}
+
+/**
+ * One retrieval channel's honesty text from this exact query: whether semantic
+ * scores really took part, and why not when they did not.
+ */
+export interface FishKnowledgeChannelState {
+  readonly mode: string
+  readonly used: boolean
+  readonly detail: string
+  readonly status: string
+  readonly label: string
+  readonly reason: string
+  readonly indexed: number
+  readonly pending: number
+  readonly fts5: boolean
+  readonly ready: boolean
+  readonly unindexed: number
+}
+
+/** The semantic channel as one query actually used it. */
+export interface FishKnowledgeSemantic {
+  readonly used: boolean
+  readonly status: string
+  readonly mode: string
+  readonly label: string
+  readonly reason: string
+  /** True only when this query itself went through the vector channel. */
+  readonly query_used_semantic: boolean
+  readonly channels: Readonly<Record<string, FishKnowledgeChannelState>>
+}
+
+/** `knowledge.search` retrieval facts: mode, label, per-channel truth and counts. */
+export interface FishKnowledgeRetrieval {
+  readonly mode: string
+  readonly label: string
+  /** FTS5 is always the lexical base and is always present. */
+  readonly fts5: boolean
+  readonly note: string
+  readonly limit: number
+  readonly truncated: boolean
+  readonly matched_total: number
+  readonly terms: readonly string[]
+  readonly channels: Readonly<Record<string, number>>
+  readonly semantic: FishKnowledgeSemantic
+}
+
+/** Recorded source place, author and revision; these fields never change the request's instance. */
+export interface FishKnowledgeOrigin {
+  readonly scope: string
+  readonly source: string
+  readonly sender: string
+  readonly quote: string
+  readonly references: readonly string[]
+  readonly version: number
+  readonly parent_version: string
+}
+
+/** One graded hit: an index reference, its channel and its levels. */
+export interface FishKnowledgeHit {
+  /** Stable reference the owning store understands (`message:…`, `doc:…`, `memory:…`). */
+  readonly reference: string
+  readonly kind: string
+  readonly level: string
+  readonly channel: string
+  readonly snippet: string
+  readonly time: string
+  readonly score: number | null
+  readonly fused: number
+  /** Which channel actually matched it (fts5 or fts5+semantic). */
+  readonly matched_by: string
+  /** Genuine semantic score when the vector channel returned one; null otherwise. */
+  readonly semantic: number | null
+  /** Whether an overview level exists for this hit at all. */
+  readonly overview_available: boolean
+  /** Why no overview exists; empty when one does. */
+  readonly overview_reason: string
+  readonly original_available: boolean
+  readonly origin: FishKnowledgeOrigin
+}
+
+/** `knowledge.search` reply. */
+export interface FishKnowledgeSearch {
+  readonly query: string
+  readonly hits: readonly FishKnowledgeHit[]
+  readonly retrieval: FishKnowledgeRetrieval
+}
+
+/** One original message as `knowledge.open` reads it back from its owning store. */
+export interface FishKnowledgeMessage {
+  readonly id: string
+  readonly time: string
+  readonly place: string
+  readonly sender: string
+  readonly direction: string
+  readonly text: string
+  readonly status: string
+  /** The message this one replied to, when the store recorded it. */
+  readonly quote: string
+  readonly conversation: string
+  /** Attachment segments by type and name; originals stay in their own store. */
+  readonly attachments: readonly string[]
+}
+
+/** The compressed-range catalogue entry one message belongs to. */
+export interface FishKnowledgeCatalog {
+  readonly gist: string
+  readonly topics: string
+  readonly start_time: string
+  readonly end_time: string
+  readonly from: string
+  readonly to: string
+}
+
+/**
+ * One expanded reference at a requested level. The page renders the variant the
+ * owning store answered; unavailable originals stay unavailable instead of
+ * being replaced by a guess.
+ */
+export type FishKnowledgeOpened =
+  | {
+    readonly kind: 'message'
+    readonly reference: string
+    readonly level: string
+    readonly note: string
+    readonly message: FishKnowledgeMessage | null
+    readonly catalog: FishKnowledgeCatalog | null
+    readonly context: readonly FishKnowledgeMessage[]
+    readonly attachments: readonly string[]
+  }
+  | {
+    readonly kind: 'catalog'
+    readonly reference: string
+    readonly level: string
+    readonly note: string
+    readonly gist: string
+    readonly topics: string
+    readonly start_time: string
+    readonly end_time: string
+    readonly messages: readonly FishKnowledgeMessage[]
+    readonly page: number
+    readonly next_page: number | null
+  }
+  | {
+    readonly kind: 'document'
+    readonly reference: string
+    readonly level: string
+    readonly note: string
+    readonly doc_id: string
+    readonly doc_name: string
+    readonly version: number
+    readonly chunks: number
+    readonly chars: number
+    readonly url: string
+    readonly original_path: string
+    readonly original_exists: boolean
+    readonly origin: FishKnowledgeOrigin
+    /** The chunk this reference points at, when the store returned one. */
+    readonly chunk: FishDocumentChunk | null
+    readonly preview: readonly FishDocumentChunk[]
+  }
+  | {
+    readonly kind: 'memory'
+    readonly reference: string
+    readonly level: string
+    readonly note: string
+    readonly memory: FishMemory | null
+    readonly revisions: readonly FishMemoryRevision[]
+  }
+  | {
+    readonly kind: 'digest'
+    readonly reference: string
+    readonly level: string
+    readonly note: string
+    readonly digest: FishDigest | null
+  }
+  | { readonly kind: 'other'; readonly reference: string; readonly level: string; readonly note: string }
+
+/** One instance of a plan, as `schedules.list` attaches it under `occurrences`. */
+export interface FishPlanOccurrence {
+  readonly slot: string
+  readonly display: string
+  readonly state: string
+  readonly note: string
+  readonly receipt_id: string
+  /** Real main-execution turn id; empty when this instance has no linked turn. */
+  readonly execution: string
+  readonly attempts: number
+  readonly created: number
+  readonly updated: number
+}
+
 /** One native task record from `schedules.list`. */
 export interface FishTask {
   readonly id: string
@@ -308,7 +637,175 @@ export interface FishTask {
   readonly prompt: string
   readonly status: string
   readonly target?: string
+  /** Newest first; absent when the reply carries none. */
+  readonly occurrences?: readonly FishPlanOccurrence[]
   readonly [field: string]: unknown
+}
+
+/** What triggered one main-execution turn (`turn.view.trigger`). */
+export interface FishTurnTrigger {
+  readonly kind: string
+  readonly reason: string
+  readonly place: string
+  readonly source: string
+  readonly reference: string
+}
+
+/** The real delivery facts of one turn; plan and chat turns fill different fields. */
+export interface FishTurnDelivery {
+  /** Transport state as the turn recorded it (`SUCCEEDED`, `sent`, `uncertain`…). */
+  readonly state: string
+  readonly sent: boolean
+  readonly target: string
+  /** Bubble count when the delivery module returned one; null otherwise. */
+  readonly bubbles: number | null
+  readonly receiptId: string
+  readonly receiptMessageId: string
+  readonly error: string
+}
+
+/** Real timestamps of one turn's prepared delivery; absent values stay null. */
+export interface FishTurnTimes {
+  readonly arrival: string
+  readonly started: number | null
+  readonly first_output: number | null
+  readonly sending: number | null
+  readonly receipt: number | null
+  readonly outcome: string
+  readonly error: string
+}
+
+/** The plan instance a turn served, when it was triggered by one. */
+export interface FishTurnPlanRef {
+  readonly schedule_id: string
+  readonly slot: string
+}
+
+/** One turn's real record from `turn.view`. */
+export interface FishTurnView {
+  readonly instance_id: string
+  readonly created: number | null
+  readonly started: number | null
+  readonly finished: number | null
+  readonly merged_into: string
+  readonly materials: readonly FishTurnMaterial[]
+  readonly actions: readonly FishTurnAction[]
+  readonly outputs: readonly {
+    readonly text: string
+    readonly kind: string
+    readonly state: string
+    readonly target: string
+    readonly call_id: string
+  }[]
+  readonly trace: FishTurnTrace | null
+  readonly batches: readonly Readonly<Record<string, unknown>>[]
+  readonly usage: FishTurnUsage | null
+  readonly output_speed: { readonly tokens_per_second: number | null; readonly reason: string } | null
+  readonly execution: string
+  readonly status: string
+  readonly raw_status: string
+  readonly error: string
+  readonly trigger: FishTurnTrigger
+  readonly delivery: FishTurnDelivery | null
+  readonly delivery_times: FishTurnTimes | null
+  readonly plan: FishTurnPlanRef | null
+  readonly silent: boolean
+  readonly merged: boolean
+}
+
+/** Original input material, retaining a missing original separately from its ledger preview. */
+export interface FishTurnMaterial {
+  readonly seq: number
+  readonly reference: string
+  readonly source: string
+  readonly conversation: string
+  readonly message: string
+  readonly place: string
+  readonly received: number | null
+  readonly text: string
+  readonly preview: string
+  readonly original_state: string
+  readonly original: Readonly<Record<string, unknown>> | null
+  readonly payload: Readonly<Record<string, unknown>>
+  readonly considered: boolean
+  readonly cancelled: boolean
+}
+
+/** Tool facts shown without fetching the full trace for every row. */
+export interface FishTurnAction {
+  readonly call_id: string
+  readonly name: string
+  readonly state: string
+  readonly started: number | null
+  readonly finished: number | null
+}
+
+/** Persisted provider trace; directory summaries omit reasoning and events. */
+export interface FishTurnTrace {
+  readonly state: string
+  readonly id: string
+  readonly reference: string
+  readonly phase: string
+  readonly has_reasoning: boolean
+  readonly reasoning?: string
+  readonly error: string
+  readonly events?: readonly { readonly kind: string; readonly at: number | null; readonly value: unknown }[]
+}
+
+/** Accounted main-execution requests; null token fields mean unreported, not zero. */
+export interface FishTurnUsage {
+  readonly scope: string
+  readonly state: string
+  readonly request_count: number
+  readonly closed_steps: number
+  readonly turns: number
+  readonly usage_reports: number
+  readonly input_tokens: number | null
+  readonly output_tokens: number | null
+  readonly cache_read_tokens: number | null
+  readonly cache_write_tokens: number | null
+  readonly uncached_input_tokens: number | null
+  readonly cache_hit_ratio: number | null
+  readonly coverage: { readonly recorded_requests: number; readonly linked_requests: number; readonly unlinked_requests: number }
+  readonly field_reports: Readonly<Record<string, number>>
+}
+
+/** Stable execution directory, newest first, scoped to one fixed instance. */
+export interface FishTurns {
+  readonly instance_id: string
+  readonly runs: readonly FishTurnView[]
+  readonly next_cursor: string | null
+  readonly stats: FishTurnUsage
+}
+
+/** One entry of Fish's own workspace (`workspace.list`). */
+export interface FishWorkspaceEntry {
+  readonly name: string
+  readonly directory: boolean
+  /** File size; null for a directory. */
+  readonly bytes: number | null
+}
+
+/** `workspace.list` reply: the listed relative directory and its entries. */
+export interface FishWorkspaceListing {
+  readonly path: string
+  readonly entries: readonly FishWorkspaceEntry[]
+}
+
+/** `workspace.read` reply: the relative path, returned line count, and text lines. */
+export interface FishWorkspaceFile {
+  readonly path: string
+  readonly lines: number
+  readonly text: readonly string[]
+}
+
+/** `workspace.write` reply: the real file_write tool result. */
+export interface FishWorkspaceWrite {
+  readonly ok: boolean
+  readonly path: string
+  readonly bytes: number
+  readonly mtime_ns: number
+  readonly error: string
 }
 
 /** Where a conversation's messages come from: this window, or a QQ group thread. */
@@ -572,22 +1069,42 @@ export interface FishDelegatedTask {
   readonly finished?: number
 }
 
-/** One whitelisted group as channels.status reports it: the policy that really decides. */
+/** One instance's group participation and effective sending capability. */
 export interface FishChannelGroup {
   readonly id: string
   readonly topic: string
   readonly route: string
   readonly engine: string
   readonly listen: boolean
+  readonly read: boolean
   readonly reply: boolean
   readonly learn: boolean
 }
 
 /** The channels.status reply: who she is, the private route, and every whitelisted group. */
+/** One connected service's real readiness, in the backend's own words. */
+export interface FishChannelService {
+  readonly name: string
+  readonly ready: boolean
+  readonly detail: string
+}
+
 export interface FishChannelStatus {
+  readonly instance_id: FishInstanceId
+  readonly version: 1
+  readonly connection_id: '' | 'qq'
+  readonly receive: boolean
+  readonly private_receive: boolean
+  readonly connections: readonly {
+    readonly id: 'qq'
+    readonly name: string
+    readonly bot: string
+    readonly connected: boolean
+  }[]
   readonly owner: string
   readonly bot: string
   readonly groups: readonly FishChannelGroup[]
+  readonly services: readonly FishChannelService[]
   readonly private_route: string
   readonly note: string
 }
@@ -604,11 +1121,6 @@ export interface FishRetrievalStatus {
   readonly last_detail?: string
 }
 
-export interface FishDocumentSearch {
-  readonly results: readonly FishDocumentHit[]
-  readonly retrieval: FishRetrievalStatus
-}
-
 /** One stored document in the owner's private shelf; one upload is one version. */
 export interface FishDocument {
   readonly doc_id: string
@@ -623,6 +1135,10 @@ export interface FishDocument {
   readonly source?: string
   readonly url?: string
   readonly fetched_at?: string
+  /** Category path the owner moved it into; empty when it sits at the shelf root. */
+  readonly folder: string
+  /** Original bytes when the backend recorded them; absent otherwise. */
+  readonly bytes?: number
 }
 
 /** One chunk as `library.detail` previews it; `ord` is the 1-based chunk number. */
@@ -638,20 +1154,182 @@ export interface FishDocumentDetail extends FishDocument {
   readonly next_ord?: number
 }
 
-/** One retrieved chunk: the search field and the private chat read the same rows. */
-export interface FishDocumentHit {
-  readonly doc_id: string
-  readonly doc_name: string
-  readonly ord: number
-  readonly text: string
-  readonly score: number
-}
-
-/** `library.delete` reply. */
+/** `library.delete` reply: the tombstoned version and how many chunks left the index. */
 export interface FishDocumentDeleted {
   readonly ok: boolean
   readonly doc_id: string
   readonly chunks: number
+  /** The original file is deliberately kept; only storage and retrieval left. */
+  readonly original_retained: boolean
+}
+
+/** `library.organize` (move) reply: where the original and its category really went. */
+export interface FishDocumentOrganized {
+  readonly ok: boolean
+  readonly doc_id: string
+  readonly path: string
+  /** Category path joined by '/'; empty for the shelf root. */
+  readonly folder: string
+}
+
+/** Plugin kinds the Fish registry actually accepts; the form offers exactly these. */
+export type FishPluginKind = 'mcp_stdio' | 'mcp_http' | 'mcp_sse' | 'cli' | 'http' | 'dsh'
+
+/** One tool a plugin reported during a real discovery; display-only here. */
+export interface FishPluginTool {
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: Readonly<Record<string, unknown>>
+}
+
+/** One registry lifecycle event; the same record the maintenance view reads. */
+export interface FishPluginEvent {
+  readonly ts: number
+  readonly plugin: string
+  readonly role: string
+  readonly action: string
+  readonly ok: boolean
+  readonly detail: string
+}
+
+/** One registered plugin with the result of its last real discovery test. */
+export interface FishPlugin {
+  readonly id: string
+  readonly name: string
+  readonly kind: FishPluginKind
+  readonly roles: readonly string[]
+  readonly enabled: boolean
+  readonly owner_only: boolean
+  readonly timeout: number
+  readonly command: string
+  readonly args: readonly string[]
+  readonly url: string
+  /** null means every discovered tool is allowed; an empty array allows none. */
+  readonly allowed_tools: readonly string[] | null
+  /** Epoch seconds of the last test; null when the plugin was never tested. */
+  readonly last_test: number | null
+  readonly last_error: string
+  /** null = never tested, true = last discovery succeeded, false = it failed. */
+  readonly test_ok: boolean | null
+  readonly server_name: string
+  readonly server_version: string
+  readonly package_name: string
+  readonly package_version: string
+  readonly tools: readonly FishPluginTool[]
+  readonly installed_roles: readonly string[]
+}
+
+/** `plugins.list` reply: the registry, its recent events, and the calls still running. */
+export interface FishPluginSnapshot {
+  readonly plugins: readonly FishPlugin[]
+  readonly events: readonly FishPluginEvent[]
+  readonly active: readonly string[]
+}
+
+/** `plugins.test` reply: the tools the plugin really reported. */
+export interface FishPluginDiscovery {
+  readonly tools: readonly FishPluginTool[]
+  /** True when a DSH native package was installed into its roles for this discovery. */
+  readonly native: boolean
+}
+
+/** One skill as `skills.list` reports it; the body is a separate real read. */
+export interface FishSkill {
+  readonly name: string
+  readonly description: string
+  readonly enabled: boolean
+  /** Epoch seconds, or a string when the registry stored one; null when neither exists. */
+  readonly updated: number | string | null
+  readonly path: string
+  readonly chars: number
+}
+
+/** `skills.list` reply: the real folder contents plus Fish's own semantic note. */
+export interface FishSkillSnapshot {
+  readonly skills: readonly FishSkill[]
+  readonly note: string
+}
+
+/** One skill with its body, as save/import/enable/read return it. */
+export interface FishSkillEntry extends FishSkill {
+  readonly body: string
+  readonly note: string
+}
+
+/** `skills.delete` reply. */
+export interface FishSkillDeleted {
+  readonly name: string
+}
+
+/** One model connection exactly as Fish's runtime configuration stores it. */
+export interface FishModelConnection {
+  readonly id: string
+  readonly role: string
+  readonly name: string
+  readonly base: string
+  readonly model: string
+  readonly key_ref: string
+  readonly has_key: boolean
+  /** How the credential was found; the value itself never reaches the page. */
+  readonly key_source: string
+  readonly env: string
+}
+
+/** One use and the connection it really reads. Unsupported uses carry a reason. */
+export interface FishModelUse {
+  readonly use: string
+  readonly role: string
+  readonly label: string
+  readonly supported: boolean
+  readonly ready: boolean
+  readonly connection: string
+  readonly model: string
+  readonly reason: string
+}
+
+/** What the chat gateway really reads right now, or why it could not be read. */
+export interface FishModelGateway {
+  readonly base: string
+  readonly model: string
+  readonly has_key: boolean
+  readonly error: string
+}
+
+/** `models.connections` reply; `models.current` adds the gateway's own read. */
+export interface FishModelDescription {
+  readonly connections: readonly FishModelConnection[]
+  readonly uses: readonly FishModelUse[]
+  readonly source: string
+  readonly note: string
+  readonly gateway?: FishModelGateway
+}
+
+/** `models.save` reply: the stored connection and when it took effect. */
+export interface FishModelSaved {
+  readonly connection: FishModelConnection
+  readonly effective_at: string
+  readonly applied_uses: readonly string[]
+  readonly note: string
+}
+
+/** `models.test` / `models.discover` reply: one real probe, success or failure. */
+export interface FishModelProbe {
+  readonly ok: boolean
+  readonly status: number
+  readonly models: readonly string[]
+  readonly model: string
+  readonly discovery: boolean
+  readonly reason: string
+  readonly note: string
+}
+
+/** `models.remove` reply: what was removed and which uses are now unconfigured. */
+export interface FishModelRemoved {
+  readonly removed: boolean
+  readonly connection: FishModelConnection | null
+  readonly affected_uses: readonly string[]
+  readonly ready: boolean
+  readonly note: string
 }
 
 /** JSON object narrowing at the wire. */
@@ -727,4 +1405,16 @@ export class WorkbenchPayloadError extends Error {
 export function timestampText(value: string | number): string {
   const date = typeof value === 'number' ? new Date(value < 1e12 ? value * 1000 : value) : new Date(value)
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString()
+}
+
+/** One instance's persisted tool choices and effective display rows. */
+export interface FishToolSettings {
+  readonly instance_id: string
+  readonly settings: {
+    readonly tools: Readonly<Record<string, boolean>>
+    readonly plugins: Readonly<Record<string, boolean>>
+    readonly send: { readonly private: boolean; readonly group: boolean; readonly groups: Readonly<Record<string, boolean>> }
+  }
+  readonly tools: readonly { readonly name: string; readonly description: string; readonly enabled: boolean; readonly reason: string }[]
+  readonly groups: readonly string[]
 }
